@@ -1366,6 +1366,25 @@ def test_gemini():
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)})
 
+@app.route('/api/conversation-history', methods=['GET'])
+def get_conversation_history():
+    """Get conversation history for management UI"""
+    try:
+        from conversation_manager import get_conversation_manager
+        
+        conv_manager = get_conversation_manager()
+        conversations = conv_manager.list_recent_conversations(limit=20)
+        stats = conv_manager.get_conversation_stats()
+        
+        return jsonify({
+            "status": "success",
+            "conversations": conversations,
+            "stats": stats
+        })
+        
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)})
+
 @app.route('/api/ai-chat', methods=['POST'])
 def ai_chat():
     """Handle AI chat messages"""
@@ -1383,18 +1402,39 @@ def ai_chat():
         # Use DuckDB Query Engine for natural language queries
         try:
             from query_engine import create_query_engine, format_query_response
+            from conversation_manager import get_conversation_manager
+            
+            # Get or create conversation ID
+            conversation_id = data.get('conversation_id')
+            conv_manager = get_conversation_manager()
+            
+            if not conversation_id:
+                conversation_id = conv_manager.create_conversation()
             
             # Create query engine instance (we should really cache this, but for now create fresh)
             query_engine = create_query_engine(api_key)
             
-            # TODO: Restore conversation context from conversation_history if needed
-            # For now, each query starts fresh - we could enhance this later
+            # Restore conversation context from persistent storage
+            stored_context = conv_manager.get_conversation_context(conversation_id, limit=5)
+            if stored_context:
+                query_engine.conversation_context = stored_context
             
             # Execute the natural language query
             result = query_engine.query(message)
             
             # Format the response for chat display
             response = format_query_response(result)
+            
+            # Save the conversation exchange
+            data_insights = result.get('summary', '')
+            sql_query = result.get('sql', '')
+            conv_manager.add_message(
+                conversation_id=conversation_id,
+                user_message=message,
+                ai_response=response,
+                sql_query=sql_query,
+                data_insights=data_insights
+            )
         
         except Exception as query_error:
             print(f"Query engine failed: {query_error}")
@@ -1415,7 +1455,11 @@ Error details: {str(query_error)}"""
         if response.startswith("Error"):
             return jsonify({"status": "error", "message": response})
         
-        return jsonify({"status": "success", "response": response})
+        return jsonify({
+            "status": "success", 
+            "response": response,
+            "conversation_id": conversation_id if 'conversation_id' in locals() else None
+        })
         
     except Exception as e:
         return jsonify({"status": "error", "message": f"Server error: {str(e)}"})

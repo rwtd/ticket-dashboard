@@ -957,6 +957,16 @@
                         <button onclick="initializeAI()" class="btn" style="background: #10b981; flex: 1;">Initialize AI Assistant</button>
                         <button onclick="testGeminiConnection()" class="btn" style="background: #f59e0b; flex: 1;">Test Connection</button>
                     </div>
+                    <div id="conversation-status" style="margin-top: 10px; font-size: 12px; color: #999;">
+                        No active conversation
+                    </div>
+                    <div id="conversation-controls" style="margin-top: 10px; display: none;">
+                        <div style="display: flex; gap: 5px; flex-wrap: wrap;">
+                            <button onclick="startNewConversation()" class="btn" style="background: #3b82f6; font-size: 10px; padding: 4px 8px;">New Chat</button>
+                            <button onclick="showConversationHistory()" class="btn" style="background: #6b7280; font-size: 10px; padding: 4px 8px;">History</button>
+                            <button onclick="clearCurrentConversation()" class="btn" style="background: #ef4444; font-size: 10px; padding: 4px 8px;">Clear</button>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- AI Chat Interface -->
@@ -2105,6 +2115,7 @@
         // AI Assistant Functions
         let aiInitialized = false;
         let conversationHistory = [];
+        let currentConversationId = null;
 
         function initializeAI() {
             const apiKey = document.getElementById('gemini-api-key').value;
@@ -2207,14 +2218,21 @@
                     api_key: localStorage.getItem('gemini_api_key'),
                     ticket_files: selectedTicketFiles,
                     chat_files: selectedChatFiles,
-                    conversation_history: conversationHistory
+                    conversation_history: conversationHistory,
+                    conversation_id: currentConversationId
                 })
             })
             .then(response => response.json())
             .then(data => {
                 if (data.status === 'success') {
                     addAIMessage('ai', data.response);
-                    // Update conversation history
+                    
+                    // Update conversation ID and history
+                    if (data.conversation_id) {
+                        currentConversationId = data.conversation_id;
+                        updateConversationStatus();
+                    }
+                    
                     conversationHistory.push({ role: 'user', content: message });
                     conversationHistory.push({ role: 'assistant', content: data.response });
                 } else {
@@ -2249,10 +2267,72 @@
 
             const messageDiv = document.createElement('div');
             messageDiv.className = `ai-message ${sender}`;
-            messageDiv.textContent = message;
+            messageDiv.innerHTML = message; // Use innerHTML for rich content
 
             messagesDiv.appendChild(messageDiv);
             messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+        
+        function updateConversationStatus() {
+            const statusDiv = document.getElementById('conversation-status');
+            const controlsDiv = document.getElementById('conversation-controls');
+            if (statusDiv && currentConversationId) {
+                const messageCount = Math.floor(conversationHistory.length / 2);
+                statusDiv.innerHTML = `💬 Conversation ${currentConversationId} (${messageCount} exchanges)`;
+                statusDiv.style.color = '#4ade80';
+                // Show conversation controls
+                if (controlsDiv) {
+                    controlsDiv.style.display = 'block';
+                }
+            }
+        }
+
+        function startNewConversation() {
+            if (confirm('Start a new conversation? Current conversation will be saved.')) {
+                currentConversationId = null;
+                conversationHistory = [];
+                
+                // Clear chat messages
+                const messagesDiv = document.getElementById('ai-messages');
+                messagesDiv.innerHTML = '<div class="ai-status">Started new conversation! Ask me anything about your support data.</div>';
+                
+                // Update status
+                const statusDiv = document.getElementById('conversation-status');
+                const controlsDiv = document.getElementById('conversation-controls');
+                if (statusDiv) {
+                    statusDiv.innerHTML = 'Ready for new conversation';
+                    statusDiv.style.color = '#999';
+                }
+                if (controlsDiv) {
+                    controlsDiv.style.display = 'none';
+                }
+                
+                showAlert('New conversation started!', 'success');
+            }
+        }
+
+        function clearCurrentConversation() {
+            if (currentConversationId && confirm('Clear current conversation? This will remove all messages but keep the conversation history.')) {
+                // Clear chat messages but keep conversation ID
+                const messagesDiv = document.getElementById('ai-messages');
+                messagesDiv.innerHTML = '<div class="ai-status">Conversation cleared. Continue where you left off!</div>';
+                
+                showAlert('Conversation cleared!', 'success');
+            }
+        }
+
+        function showConversationHistory() {
+            // For now, show a simple alert with basic info
+            if (currentConversationId) {
+                const messageCount = Math.floor(conversationHistory.length / 2);
+                const summary = `Current Conversation: ${currentConversationId}\\n` +
+                               `Messages: ${messageCount} exchanges\\n` +
+                               `Status: Active\\n\\n` +
+                               'Full conversation history management coming soon!';
+                alert(summary);
+            } else {
+                alert('No active conversation. Start chatting to create one!');
+            }
         }
 
         // Handle Enter key in AI input

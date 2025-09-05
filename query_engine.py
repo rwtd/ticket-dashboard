@@ -463,10 +463,7 @@ def format_query_response(result: Dict[str, Any]) -> str:
     if 'conversational_response' in result:
         response = result['conversational_response']
         
-        # Optionally add SQL query for transparency (smaller/less prominent)
-        if result.get('sql'):
-            response += f"\n\n<details><summary>📊 View SQL Query</summary>\n\n```sql\n{result['sql']}\n```\n</details>"
-        
+        # Keep responses clean - no SQL clutter in conversational mode
         return response
     
     # Fallback to old format if no conversational response

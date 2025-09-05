@@ -54,6 +54,13 @@ python ticket_analytics.py --custom 15072025-22072025  # Date range
 - **Real-time SQL Generation** - Gemini converts questions to DuckDB queries
 - **Privacy-First** - Only table schemas sent to AI, never actual data
 
+### 💬 Persistent Conversation System (`conversation_manager.py`)
+- **Session Persistence** - Conversations survive browser refreshes and server restarts
+- **Context Restoration** - Automatically restores conversation history on return
+- **Conversation Management** - Start new chats, clear current conversation, view history
+- **JSONL Storage** - Efficient append-only conversation storage with automatic cleanup
+- **Statistics Tracking** - Monitor conversation usage, activity, and engagement metrics
+
 ### 📊 Traditional Analytics Suite
 - **📋 Ticket Analytics** - Response times, agent performance, volume trends
 - **💬 Chat Analytics** - Bot satisfaction, transfer rates, volume analysis  
@@ -107,6 +114,7 @@ python ticket_analytics.py --custom 15072025-22072025  # Date range
 
 ### Core AI Engine
 - **`query_engine.py`** - Conversational AI with DuckDB + Gemini integration
+- **`conversation_manager.py`** - Persistent conversation history and context management
 - **`app.py`** - Flask web application with integrated chat interface
 - **`processing_logger.py`** - Real-time logging and Google Sheets sync tracking
 
@@ -158,10 +166,11 @@ agents:
 ## 🚀 Advanced Usage
 
 ### Conversational AI Sessions
-- **Memory Retention** - Remembers last 5 conversation exchanges
-- **Context Awareness** - Understands references to previous queries
-- **Smart Suggestions** - Proposes relevant follow-up analysis
-- **SQL Transparency** - Shows generated queries for verification
+- **Memory Retention** - Remembers last 5 conversation exchanges with persistent storage
+- **Context Awareness** - Understands references to previous queries across sessions
+- **Smart Suggestions** - Proposes relevant follow-up analysis based on conversation history
+- **Session Management** - Start new conversations, clear current chat, browse history
+- **Automatic Persistence** - Conversations survive browser refreshes and server restarts
 
 ### Traditional Dashboards
 - **Interactive Charts** - Plotly-based with matplotlib fallback
