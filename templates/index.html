@@ -1,0 +1,2296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ticket Analytics Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', sans-serif;
+            background: linear-gradient(135deg, #1e1e2e 0%, #2a2d47 100%);
+            min-height: 100vh;
+            padding: 20px;
+            color: #e0e0e0;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: rgba(23, 23, 35, 0.8);
+            border-radius: 15px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+
+        .header {
+            background: rgba(23, 23, 35, 0.8);
+            color: #00d4aa;
+            padding: 30px;
+            text-align: center;
+            border-bottom: 3px solid #00d4aa;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            font-size: 1.2em;
+            opacity: 0.9;
+        }
+
+        .content {
+            padding: 30px;
+        }
+
+        .section {
+            margin-bottom: 30px;
+            background: rgba(23, 23, 35, 0.8);
+            padding: 25px;
+            border-radius: 15px;
+            border-left: 4px solid #00d4aa;
+            position: relative;
+            z-index: 10;
+        }
+
+        .section h2 {
+            color: #00d4aa;
+            margin-bottom: 20px;
+            font-size: 1.5em;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 600;
+            color: #e0e0e0;
+        }
+
+        .form-control {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #3a3a4a;
+            border-radius: 8px;
+            font-size: 14px;
+            background: rgba(42, 45, 71, 0.5);
+            color: #e0e0e0;
+            transition: border-color 0.3s;
+        }
+
+        .form-control:focus {
+            outline: none;
+            border-color: #00d4aa;
+            box-shadow: 0 0 0 3px rgba(0, 212, 170, 0.1);
+        }
+
+        .btn {
+            background: linear-gradient(45deg, #00d4aa, #00b89a);
+            color: white;
+            border: none;
+            padding: 12px 25px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            transition: all 0.3s;
+            margin-right: 10px;
+            margin-bottom: 10px;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+        }
+
+        .btn-danger {
+            background: linear-gradient(45deg, #e74c3c, #c0392b);
+        }
+
+        .btn-success {
+            background: linear-gradient(45deg, #27ae60, #219a52);
+        }
+
+        .file-upload {
+            border: 2px dashed #3498db;
+            border-radius: 10px;
+            padding: 30px;
+            text-align: center;
+            background: #f8f9fa;
+            transition: all 0.3s;
+        }
+
+        .file-upload:hover {
+            border-color: #2980b9;
+            background: #ecf0f1;
+        }
+
+        .file-upload input[type="file"] {
+            display: none;
+        }
+
+        .file-upload-label {
+            display: inline-block;
+            padding: 12px 25px;
+            background: #3498db;
+            color: white;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+
+        .file-upload-label:hover {
+            background: #2980b9;
+        }
+
+        .file-list {
+            background: white;
+            border-radius: 8px;
+            overflow: hidden;
+            border: 1px solid #e0e0e0;
+        }
+
+        .file-item {
+            padding: 15px;
+            border-bottom: 1px solid #e0e0e0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .file-item:last-child {
+            border-bottom: none;
+        }
+
+        .file-item:hover {
+            background: #f8f9fa;
+        }
+
+        .file-info {
+            flex: 1;
+        }
+
+        .file-name {
+            font-weight: 600;
+            color: #2c3e50;
+        }
+
+        .file-meta {
+            font-size: 12px;
+            color: #7f8c8d;
+            margin-top: 5px;
+        }
+
+        .checkbox-group {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+            margin-top: 10px;
+        }
+
+        .checkbox-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .checkbox-item input[type="checkbox"] {
+            width: 18px;
+            height: 18px;
+        }
+
+        .date-controls {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-top: 15px;
+        }
+
+        .date-option {
+            padding: 15px;
+            background: rgba(23, 23, 35, 0.8);
+            border-radius: 8px;
+            border: 2px solid #3a3a4a;
+            transition: all 0.3s;
+            color: #e0e0e0;
+        }
+
+        .date-option.active {
+            border-color: #00d4aa;
+            background: rgba(42, 45, 71, 0.5);
+            color: #e0e0e0;
+        }
+
+        .date-option label {
+            color: #e0e0e0 !important;
+        }
+
+        .date-option small {
+            color: #e0e0e0 !important;
+        }
+
+        .date-option input[type="radio"] {
+            margin-right: 10px;
+        }
+
+        /* AI Assistant Styles */
+        .ai-assistant-section {
+            background: rgba(23, 23, 35, 0.8);
+            border-radius: 10px;
+            padding: 25px;
+            margin-bottom: 20px;
+            border: 2px solid #4f46e5;
+            display: none;
+        }
+
+        .ai-chat-container {
+            background: rgba(13, 13, 23, 0.9);
+            border-radius: 8px;
+            padding: 20px;
+            margin-top: 15px;
+            min-height: 400px;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .ai-messages {
+            flex: 1;
+            max-height: 300px;
+            overflow-y: auto;
+            padding: 15px;
+            background: rgba(23, 23, 35, 0.5);
+            border-radius: 8px;
+            margin-bottom: 15px;
+            border: 1px solid #3a3a4a;
+        }
+
+        .ai-message {
+            margin-bottom: 15px;
+            padding: 12px 15px;
+            border-radius: 8px;
+            max-width: 85%;
+            word-wrap: break-word;
+        }
+
+        .ai-message.user {
+            background: #4f46e5;
+            color: white;
+            margin-left: auto;
+            text-align: right;
+        }
+
+        .ai-message.ai {
+            background: #374151;
+            color: #e5e7eb;
+            margin-right: auto;
+        }
+
+        .ai-input-section {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .ai-input {
+            flex: 1;
+            padding: 12px 15px;
+            border: 2px solid #3a3a4a;
+            border-radius: 8px;
+            background: rgba(23, 23, 35, 0.8);
+            color: #e0e0e0;
+            font-size: 14px;
+        }
+
+        .ai-input:focus {
+            border-color: #4f46e5;
+            outline: none;
+        }
+
+        .ai-send-btn {
+            padding: 12px 20px;
+            background: #4f46e5;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 500;
+            transition: background-color 0.3s;
+        }
+
+        .ai-send-btn:hover {
+            background: #4338ca;
+        }
+
+        .ai-send-btn:disabled {
+            background: #6b7280;
+            cursor: not-allowed;
+        }
+
+        .ai-status {
+            padding: 10px;
+            text-align: center;
+            font-style: italic;
+            color: #9ca3af;
+        }
+
+        .ai-config {
+            background: rgba(31, 41, 55, 0.8);
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 15px;
+            border-left: 4px solid #fbbf24;
+        }
+
+        .ai-config h4 {
+            color: #fbbf24;
+            margin-bottom: 10px;
+            font-size: 1.1em;
+        }
+
+        .ai-config input {
+            width: 100%;
+            padding: 8px 12px;
+            background: rgba(23, 23, 35, 0.8);
+            border: 1px solid #3a3a4a;
+            border-radius: 6px;
+            color: #e0e0e0;
+        }
+
+        .analyze-section {
+            text-align: center;
+            background: linear-gradient(45deg, #2c3e50, #34495e);
+            color: white;
+            border-radius: 10px;
+            padding: 30px;
+            position: relative;
+            z-index: 100;
+            margin: 20px 0;
+            clear: both;
+        }
+
+        .btn-analyze {
+            background: linear-gradient(45deg, #27ae60, #219a52);
+            font-size: 16px;
+            padding: 15px 40px;
+            border-radius: 50px;
+        }
+
+        .recent-results {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }
+        
+        .results-column {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .result-item {
+            background: rgba(23, 23, 35, 0.8);
+            padding: 20px;
+            border-radius: 10px;
+            border: 1px solid #3a3a4a;
+            transition: all 0.3s;
+        }
+
+        .result-item:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 25px rgba(0,0,0,0.3);
+            border-color: #00d4aa;
+        }
+
+        .result-title {
+            font-weight: 600;
+            color: #00d4aa;
+            margin-bottom: 10px;
+        }
+
+        .result-meta {
+            font-size: 12px;
+            color: #e0e0e0;
+        }
+
+        .collapsible-header {
+            cursor: pointer;
+            padding: 10px;
+            background: rgba(23, 23, 35, 0.8);
+            border-radius: 8px;
+            border: 2px solid #3a3a4a;
+            transition: all 0.3s ease;
+            margin-bottom: 0;
+            position: relative;
+            z-index: 20;
+            display: block;
+        }
+
+        .collapsible-header:hover {
+            background: rgba(42, 45, 71, 0.5);
+            border-color: #00d4aa;
+        }
+
+        .collapsible-header h2 {
+            margin: 0;
+            display: inline-block;
+            color: #00d4aa;
+        }
+
+        .collapsible-header small {
+            display: block;
+            color: #e0e0e0;
+            margin-top: 5px;
+        }
+
+        .collapsible-content {
+            margin-top: 15px;
+            padding: 20px;
+            background: rgba(23, 23, 35, 0.8);
+            border-radius: 8px;
+            border: 1px solid #3a3a4a;
+            color: #e0e0e0;
+        }
+
+        #results-toggle {
+            float: right;
+            transition: transform 0.3s ease;
+        }
+
+        .text-center {
+            text-align: center;
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 20px;
+        }
+
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3498db;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .alert {
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            border: 1px solid transparent;
+        }
+
+        .alert-success {
+            background: #d4edda;
+            border-color: #c3e6cb;
+            color: #155724;
+        }
+
+        .alert-error {
+            background: #f8d7da;
+            border-color: #f5c6cb;
+            color: #721c24;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                margin: 10px;
+                border-radius: 10px;
+            }
+            
+            .header {
+                padding: 20px;
+            }
+            
+            .header h1 {
+                font-size: 2em;
+            }
+            
+            .content {
+                padding: 20px;
+            }
+            
+            .date-controls {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📋 Ticket Analytics Dashboard</h1>
+            <p>Upload CSV files and generate comprehensive ticket analytics reports</p>
+        </div>
+
+        <div class="content">
+            <!-- Flash Messages -->
+            {% with messages = get_flashed_messages() %}
+                {% if messages %}
+                    {% for message in messages %}
+                        <div class="alert alert-success">{{ message }}</div>
+                    {% endfor %}
+                {% endif %}
+            {% endwith %}
+
+
+            <!-- File Upload Section (Collapsible) -->
+            <div class="section">
+                <div class="collapsible-header" onclick="toggleSection('upload-content', 'upload-toggle')">
+                    <h2>📁 Upload Ticket Data <span id="upload-toggle" style="float: right;">▼</span></h2>
+                    <small>Drag and drop CSV files or click to browse</small>
+                </div>
+                <div id="upload-content" class="collapsible-content" style="display: none;">
+                    <form action="/upload" method="post" enctype="multipart/form-data">
+                        <div class="file-upload" style="background: rgba(23, 23, 35, 0.8); border: 2px dashed #3a3a4a; border-radius: 10px; padding: 30px; text-align: center; transition: all 0.3s;">
+                            <div>
+                                <p style="margin-bottom: 15px; color: #e0e0e0;">
+                                    <strong>Drag and drop your CSV files here or click to browse</strong>
+                                </p>
+                                <label for="file-input" class="file-upload-label" style="display: inline-block; padding: 12px 25px; background: linear-gradient(45deg, #00d4aa, #00b89a); color: white; border-radius: 8px; cursor: pointer; transition: background 0.3s;">
+                                    Choose CSV File
+                                </label>
+                                <input type="file" id="file-input" name="file" accept=".csv" onchange="this.form.submit()">
+                            </div>
+                        </div>
+                    </form>
+
+                    {% if uploaded_files %}
+                    <div style="margin-top: 20px;">
+                        <h3 style="color: #00d4aa;">Uploaded Files</h3>
+                        <div class="file-list" style="background: rgba(23, 23, 35, 0.8); border-radius: 8px; overflow: hidden; border: 1px solid #3a3a4a;">
+                            {% for file in uploaded_files %}
+                            <div class="file-item" style="padding: 15px; border-bottom: 1px solid #3a3a4a; display: flex; justify-content: space-between; align-items: center; background: rgba(42, 45, 71, 0.5);">
+                                <div class="file-info">
+                                    <div class="file-name" style="font-weight: 600; color: #e0e0e0;">{{ file.name }}</div>
+                                    <div class="file-meta" style="font-size: 12px; color: #e0e0e0;">{{ "%.1f"|format(file.size/1024) }} KB • Modified: {{ file.modified }}</div>
+                                </div>
+                                <a href="/delete_upload/{{ file.name }}" class="btn btn-danger" onclick="return confirm('Delete this file?')" style="background: linear-gradient(45deg, #e74c3c, #c0392b);">Delete</a>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Analytics Type Selection -->
+            <div class="section">
+                <h2>📊 Select Analytics Type</h2>
+                <div class="form-group">
+                    <label>
+                        <input type="radio" name="analyticsType" value="tickets" checked onchange="updateAnalyticsType()"> 
+                        📋 Ticket Analytics
+                    </label>
+                </div>
+                <div class="form-group">
+                    <label>
+                        <input type="radio" name="analyticsType" value="chats" onchange="updateAnalyticsType()"> 
+                        💬 Chat Analytics
+                    </label>
+                </div>
+                <div class="form-group">
+                    <label>
+                        <input type="radio" name="analyticsType" value="combined" onchange="updateAnalyticsType()"> 
+                        📊 Combined Analytics (Tickets + Chats)
+                    </label>
+                </div>
+                <div class="form-group">
+                    <label>
+                        <input type="radio" name="analyticsType" value="agent_performance" onchange="updateAnalyticsType()"> 
+                        🎯 Agent Performance Comparison
+                    </label>
+                </div>
+                <div class="form-group">
+                    <label>
+                        <input type="radio" name="analyticsType" value="individual_agent" onchange="updateAnalyticsType()"> 
+                        👤 Individual Agent vs Team
+                    </label>
+                </div>
+                <div class="form-group">
+                    <label>
+                        <input type="radio" name="analyticsType" value="ai_assistant" onchange="updateAnalyticsType()"> 
+                        🤖 AI-Powered Analysis
+                    </label>
+                </div>
+            </div>
+
+            <!-- Data Source Selection -->
+            <div class="section">
+                <h2>📁 Select Data Source</h2>
+                <div class="form-group">
+                    <label>
+                        <input type="radio" name="dataSource" value="existing" checked onchange="updateFileSelection()"> 
+                        Use Existing Files
+                    </label>
+                </div>
+                <div class="form-group">
+                    <label>
+                        <input type="radio" name="dataSource" value="uploaded" onchange="updateFileSelection()"> 
+                        Use Uploaded Files
+                    </label>
+                </div>
+
+                <!-- Existing Files -->
+                <div id="existing-files" class="file-selection">
+                    <!-- Ticket Files -->
+                    <div id="ticket-files" class="file-group">
+                        <h3>Available Ticket Files</h3>
+                        {% if ticket_files %}
+                        <div class="checkbox-group">
+                            {% for file in ticket_files %}
+                            <div class="checkbox-item">
+                                <input type="checkbox" id="ticket-{{ loop.index }}" name="ticketFiles" value="{{ file.name }}" checked>
+                                <label for="ticket-{{ loop.index }}">
+                                    <strong>{{ file.name }}</strong><br>
+                                    <small>{{ "%.1f"|format(file.size/1024) }} KB • {{ file.modified }}</small>
+                                </label>
+                            </div>
+                            {% endfor %}
+                        </div>
+                        {% else %}
+                        <p style="color: #7f8c8d;">No CSV files found in tickets/ directory</p>
+                        {% endif %}
+                    </div>
+
+                    <!-- Chat Files -->
+                    <div id="chat-files" class="file-group hidden">
+                        <h3>Available Chat Files</h3>
+                        {% if chat_files %}
+                        <div class="checkbox-group">
+                            {% for file in chat_files %}
+                            <div class="checkbox-item">
+                                <input type="checkbox" id="chat-{{ loop.index }}" name="chatFiles" value="{{ file.name }}" checked>
+                                <label for="chat-{{ loop.index }}">
+                                    <strong>{{ file.name }}</strong><br>
+                                    <small>{{ "%.1f"|format(file.size/1024) }} KB • {{ file.modified }}</small>
+                                </label>
+                            </div>
+                            {% endfor %}
+                        </div>
+                        {% else %}
+                        <p style="color: #7f8c8d;">No CSV files found in chats/ directory</p>
+                        {% endif %}
+                    </div>
+                </div>
+
+                <!-- Uploaded Files -->
+                <div id="uploaded-files" class="file-selection hidden">
+                    <h3>Uploaded Files</h3>
+                    {% if uploaded_files %}
+                    <div class="checkbox-group">
+                        {% for file in uploaded_files %}
+                        <div class="checkbox-item">
+                            <input type="checkbox" id="uploaded-{{ loop.index }}" name="uploadedFiles" value="{{ file.name }}" checked>
+                            <label for="uploaded-{{ loop.index }}">
+                                <strong>{{ file.name }}</strong><br>
+                                <small>{{ "%.1f"|format(file.size/1024) }} KB • {{ file.modified }}</small>
+                            </label>
+                        </div>
+                        {% endfor %}
+                    </div>
+                    {% else %}
+                    <p style="color: #7f8c8d;">No uploaded files available</p>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Date Range Selection -->
+            <div class="section">
+                <h2>📅 Date Range Selection</h2>
+                <div class="date-controls">
+                    <div class="date-option active" onclick="selectDateOption(this, 'all')">
+                        <label>
+                            <input type="radio" name="dateType" value="all" checked>
+                            <strong>All Time</strong><br>
+                            <small>Analyze all available data</small>
+                        </label>
+                    </div>
+                    
+                    <div class="date-option" onclick="selectDateOption(this, 'week')">
+                        <label>
+                            <input type="radio" name="dateType" value="week">
+                            <strong>Specific Week</strong><br>
+                            <small>Monday to Sunday range</small>
+                        </label>
+                        <input type="date" id="week-date" class="form-control" style="margin-top: 10px;" disabled>
+                        <small style="color: #7f8c8d;">Select a Monday</small>
+                    </div>
+                    
+                    <div class="date-option" onclick="selectDateOption(this, 'day')">
+                        <label>
+                            <input type="radio" name="dateType" value="day">
+                            <strong>Specific Day</strong><br>
+                            <small>Single day analysis</small>
+                        </label>
+                        <input type="date" id="day-date" class="form-control" style="margin-top: 10px;" disabled>
+                    </div>
+                    
+                    <div class="date-option" onclick="selectDateOption(this, 'custom')">
+                        <label>
+                            <input type="radio" name="dateType" value="custom">
+                            <strong>Custom Range</strong><br>
+                            <small>Specify start and end dates</small>
+                        </label>
+                        <div style="margin-top: 10px;">
+                            <input type="date" id="start-date" class="form-control" style="margin-bottom: 10px;" placeholder="Start Date" disabled>
+                            <input type="date" id="end-date" class="form-control" placeholder="End Date" disabled>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Performance Period Selection (only for agent performance) -->
+            <div class="section" id="performance-period-section" style="display: none;">
+                <h2>⏱️ Performance Period Selection</h2>
+                <div class="date-controls">
+                    <div class="date-option active" onclick="selectPerformancePeriod(this, 'all')">
+                        <label>
+                            <input type="radio" name="performancePeriod" value="all" checked>
+                            <strong>All Time</strong><br>
+                            <small>Complete performance history</small>
+                        </label>
+                    </div>
+                    
+                    <div class="date-option" onclick="selectPerformancePeriod(this, '12_weeks')">
+                        <label>
+                            <input type="radio" name="performancePeriod" value="12_weeks">
+                            <strong>Last 12 Weeks</strong><br>
+                            <small>Medium-term trends</small>
+                        </label>
+                    </div>
+                    
+                    <div class="date-option" onclick="selectPerformancePeriod(this, '4_weeks')">
+                        <label>
+                            <input type="radio" name="performancePeriod" value="4_weeks">
+                            <strong>Last 4 Weeks</strong><br>
+                            <small>Recent performance</small>
+                        </label>
+                    </div>
+
+                    <div class="date-option" onclick="selectPerformancePeriod(this, '8_weeks')">
+                        <label>
+                            <input type="radio" name="performancePeriod" value="8_weeks">
+                            <strong>Last 8 Weeks</strong><br>
+                            <small>Short-term analysis</small>
+                        </label>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Agent Selection (only for individual agent analysis) -->
+            <div class="section" id="agent-selection-section" style="display: none;">
+                <h2>👤 Agent Selection</h2>
+                <div class="form-group">
+                    <label for="agentSelect"><strong>Select Agent to Analyze:</strong></label>
+                    <select id="agentSelect" name="selectedAgent" style="width: 100%; padding: 10px; border-radius: 5px; border: 1px solid #ddd; margin-top: 10px;">
+                        <option value="">Choose an agent...</option>
+                        <option value="Girly">Girly</option>
+                        <option value="Nova">Nova</option>
+                        <option value="Bhushan">Bhushan</option>
+                        <option value="Francis">Francis</option>
+                    </select>
+                </div>
+                <div class="date-controls" style="margin-top: 15px;">
+                    <div class="date-option active" onclick="selectIndividualPeriod(this, 'all')">
+                        <label>
+                            <input type="radio" name="individualPeriod" value="all" checked>
+                            <strong>All Time</strong><br>
+                            <small>Complete history</small>
+                        </label>
+                    </div>
+                    
+                    <div class="date-option" onclick="selectIndividualPeriod(this, '12_weeks')">
+                        <label>
+                            <input type="radio" name="individualPeriod" value="12_weeks">
+                            <strong>Last 12 Weeks</strong><br>
+                            <small>Medium-term</small>
+                        </label>
+                    </div>
+                    
+                    <div class="date-option" onclick="selectIndividualPeriod(this, '4_weeks')">
+                        <label>
+                            <input type="radio" name="individualPeriod" value="4_weeks">
+                            <strong>Last 4 Weeks</strong><br>
+                            <small>Recent trends</small>
+                        </label>
+                    </div>
+
+                    <div class="date-option" onclick="selectIndividualPeriod(this, '8_weeks')">
+                        <label>
+                            <input type="radio" name="individualPeriod" value="8_weeks">
+                            <strong>Last 8 Weeks</strong><br>
+                            <small>Short-term</small>
+                        </label>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Options -->
+            <div class="section">
+                <h2>⚙️ Analysis Options</h2>
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="include-delayed" name="includeDelayed">
+                        Include delayed response tickets table
+                    </label>
+                </div>
+            </div>
+
+            <!-- Export Settings Section -->
+            <div class="section">
+                <div class="collapsible-header" onclick="toggleSection('settings-content', 'settings-toggle')">
+                    <h2>⚙️ Export Settings <span id="settings-toggle" style="float: right;">▼</span></h2>
+                    <small>Configure Google Docs export and other export options</small>
+                </div>
+                <div id="settings-content" class="collapsible-content" style="display: none;">
+                    <!-- Google Docs Configuration -->
+                    <div style="background: rgba(23, 23, 35, 0.8); padding: 20px; border-radius: 8px; border: 1px solid #3a3a4a; margin-bottom: 20px;">
+                        <h3 style="color: #00d4aa; margin-top: 0;">📝 Google Docs Integration</h3>
+                        <div id="gdocs-status" style="margin-bottom: 15px;">
+                            <span id="gdocs-status-text" style="color: #e0e0e0;">Checking configuration...</span>
+                        </div>
+                        
+                        <div id="gdocs-setup" style="display: none;">
+                            <p style="color: #e0e0e0; margin-bottom: 15px;">To enable Google Docs export, you need to set up API credentials:</p>
+                            <ol style="color: #e0e0e0; margin-bottom: 15px; line-height: 1.6;">
+                                <li>Go to <a href="https://console.cloud.google.com/" target="_blank" style="color: #00d4aa;">Google Cloud Console</a></li>
+                                <li>Create or select a project</li>
+                                <li>Enable the <strong>Google Docs API</strong></li>
+                                <li>Go to "Credentials" → "Create Credentials" → "OAuth 2.0 Client IDs"</li>
+                                <li>Choose "Desktop application"</li>
+                                <li><strong>Important:</strong> Add this redirect URI: <code style="background: rgba(42, 45, 71, 0.5); padding: 2px 6px; border-radius: 3px; color: #e0e0e0;">http://localhost:9090/</code></li>
+                                <li>Download the credentials JSON file</li>
+                                <li>Upload the credentials JSON file below</li>
+                            </ol>
+                            <div style="background: rgba(255, 193, 7, 0.1); padding: 10px; border-radius: 5px; border-left: 4px solid #00d4aa; margin-bottom: 15px;">
+                                <strong style="color: #00d4aa;">📋 Copy this redirect URI exactly:</strong><br>
+                                <code style="background: rgba(42, 45, 71, 0.5); padding: 5px 10px; border-radius: 3px; font-size: 14px; color: #e0e0e0; border: 1px solid #3a3a4a; display: inline-block; margin-top: 5px;">http://localhost:9090/</code>
+                            </div>
+                            
+                            <form id="credentials-upload-form" enctype="multipart/form-data" style="margin-top: 15px;">
+                                <div style="display: flex; align-items: center; gap: 10px;">
+                                    <input type="file" id="credentials-file" accept=".json" style="flex: 1; background: rgba(42, 45, 71, 0.5); color: #e0e0e0; border: 2px solid #3a3a4a; border-radius: 8px; padding: 10px;">
+                                    <button type="submit" class="btn" style="margin: 0;">Upload Credentials</button>
+                                </div>
+                                <small style="color: #e0e0e0; display: block; margin-top: 5px;">
+                                    Upload your credentials.json file from Google Cloud Console
+                                </small>
+                            </form>
+                        </div>
+                        
+                        <div id="gdocs-configured" style="display: none;">
+                            <div style="background: rgba(40, 167, 69, 0.1); padding: 10px; border-radius: 5px; border-left: 4px solid #00d4aa;">
+                                <strong style="color: #00d4aa;">✅ Google Docs export is configured</strong>
+                                <p style="color: #e0e0e0; margin: 5px 0 0 0; font-size: 0.9em;">You can now export dashboards directly to Google Docs</p>
+                            </div>
+                            <button onclick="testGoogleDocsConnection()" class="btn" style="margin-top: 10px;">Test Connection</button>
+                            <button onclick="resetGoogleDocsCredentials()" class="btn btn-danger" style="margin-top: 10px;">Reset Credentials</button>
+                        </div>
+                    </div>
+                    
+                    <!-- Export Options -->
+                    <div style="background: rgba(23, 23, 35, 0.8); padding: 20px; border-radius: 8px; border: 1px solid #3a3a4a;">
+                        <h3 style="color: #00d4aa; margin-top: 0;">🖼️ Export Options</h3>
+                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 15px;">
+                            <div>
+                                <h4 style="color: #e0e0e0; margin-bottom: 10px;">PNG Export</h4>
+                                <label style="display: block; margin-bottom: 5px; color: #e0e0e0;">Screen Resolution:</label>
+                                <select id="png-resolution" class="form-control" style="margin-bottom: 10px;">
+                                    <option value="2560x1440" selected>2560×1440 (2K - Recommended)</option>
+                                    <option value="3840x2160">3840×2160 (4K - Highest Quality)</option>
+                                    <option value="1920x1080">1920×1080 (Full HD)</option>
+                                    <option value="1366x768">1366×768 (Laptop)</option>
+                                    <option value="1280x720">1280×720 (HD)</option>
+                                </select>
+                            </div>
+                            <div>
+                                <h4 style="color: #e0e0e0; margin-bottom: 10px;">PDF Export</h4>
+                                <div style="background: rgba(255, 193, 7, 0.1); padding: 10px; border-radius: 5px; border-left: 4px solid #00d4aa;">
+                                    <small style="color: #e0e0e0;">
+                                        <strong>Note:</strong> Interactive charts will be replaced with placeholders in PDF exports.
+                                        Use PNG export to capture visual charts.
+                                    </small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- AI Assistant Section -->
+            <div id="ai-assistant-section" class="ai-assistant-section section">
+                <h2>🤖 AI-Powered Support Data Analysis</h2>
+                <p>Chat with an AI assistant to explore your support ticket and chat data using natural language.</p>
+                
+                <!-- AI Configuration -->
+                <div class="ai-config">
+                    <h4>⚙️ Configuration</h4>
+                    <div style="margin-bottom: 10px;">
+                        <label for="gemini-api-key" style="display: block; margin-bottom: 5px; color: #e0e0e0;">Google Gemini API Key:</label>
+                        <input type="password" id="gemini-api-key" placeholder="Enter your Gemini API key..." />
+                    </div>
+                    <div style="display: flex; gap: 10px; margin-top: 10px;">
+                        <button onclick="initializeAI()" class="btn" style="background: #10b981; flex: 1;">Initialize AI Assistant</button>
+                        <button onclick="testGeminiConnection()" class="btn" style="background: #f59e0b; flex: 1;">Test Connection</button>
+                    </div>
+                </div>
+
+                <!-- AI Chat Interface -->
+                <div class="ai-chat-container">
+                    <div id="ai-messages" class="ai-messages">
+                        <div class="ai-status">
+                            Select your data files and initialize the AI assistant to start chatting!
+                        </div>
+                    </div>
+                    
+                    <div class="ai-input-section">
+                        <input type="text" id="ai-input" class="ai-input" placeholder="Ask me anything about your support data..." disabled />
+                        <button id="ai-send-btn" class="ai-send-btn" onclick="sendAIMessage()" disabled>Send</button>
+                    </div>
+                </div>
+
+                <!-- Quick Questions -->
+                <div style="margin-top: 15px;">
+                    <h4 style="color: #e0e0e0; margin-bottom: 10px;">💡 Quick Questions:</h4>
+                    <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                        <button onclick="askQuickQuestion('What are the average response times?')" class="btn" style="background: #6366f1; font-size: 12px; padding: 8px 12px;">Response Times</button>
+                        <button onclick="askQuickQuestion('Which agent handles the most tickets?')" class="btn" style="background: #6366f1; font-size: 12px; padding: 8px 12px;">Top Agent</button>
+                        <button onclick="askQuickQuestion('Show me weekend vs weekday performance')" class="btn" style="background: #6366f1; font-size: 12px; padding: 8px 12px;">Weekend Performance</button>
+                        <button onclick="askQuickQuestion('What are the main issues customers are reporting?')" class="btn" style="background: #6366f1; font-size: 12px; padding: 8px 12px;">Common Issues</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Analyze Button -->
+            <div class="analyze-section">
+                <h2 style="margin-bottom: 20px;">🚀 Generate Analytics</h2>
+                <button class="btn btn-analyze" onclick="runAnalysis()">
+                    Generate Analytics
+                </button>
+            </div>
+
+
+            <!-- Loading -->
+            <div id="loading" class="loading">
+                <div class="spinner"></div>
+                <p>Processing your ticket data...</p>
+            </div>
+
+            <!-- Latest Dashboard Link -->
+            <div id="latest-dashboard" class="section" style="display: none;">
+                <h2>🎯 Latest Analysis</h2>
+                <div id="latest-dashboard-content" style="text-align: center; padding: 20px;">
+                    <!-- Latest dashboard link will be populated here -->
+                </div>
+            </div>
+
+            <!-- Results Browser (Collapsible) -->
+            <div class="section">
+                <div class="collapsible-header" onclick="toggleResultsBrowser()">
+                    <h2>📁 Results Browser <span id="results-toggle">▶</span></h2>
+                    <small>Click to view all analysis results from the results folder</small>
+                </div>
+                <div id="results-browser" class="collapsible-content" style="display: none;">
+                    <div id="results-loading" class="text-center">
+                        Loading results...
+                    </div>
+                    
+                    <!-- Browse Local Folder Button -->
+                    <div style="text-align: center; margin-bottom: 20px;">
+                        <button onclick="openResultsFolder()" class="btn" style="background: #ff6b6b;">
+                            📁 Open Results Folder
+                        </button>
+                        <small style="display: block; color: #e0e0e0; margin-top: 5px;">
+                            Browse all historical results in your file manager
+                        </small>
+                    </div>
+                    
+                    <!-- Two Column Layout -->
+                    <div id="results-columns" style="display: none;">
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                            <!-- Ticket Results Column -->
+                            <div>
+                                <h3 style="color: #00d4aa; text-align: center; margin-bottom: 15px;">
+                                    📋 Ticket Analytics (Last 6)
+                                </h3>
+                                <div id="ticket-results" class="results-column">
+                                    <!-- Ticket results will be loaded here -->
+                                </div>
+                            </div>
+                            
+                            <!-- Chat Results Column -->
+                            <div>
+                                <h3 style="color: #00d4aa; text-align: center; margin-bottom: 15px;">
+                                    💬 Chat Analytics (Last 6)
+                                </h3>
+                                <div id="chat-results" class="results-column">
+                                    <!-- Chat results will be loaded here -->
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Processing Logs (Collapsible) -->
+            <div class="section">
+                <div class="collapsible-header" onclick="toggleLogsSection()">
+                    <h2>📋 Processing & Sync Logs <span id="logs-toggle">▶</span></h2>
+                    <small>View real-time processing logs and Google Sheets sync history</small>
+                </div>
+                <div id="logs-section" class="collapsible-content" style="display: none;">
+                    <!-- Current Run Status -->
+                    <div id="current-run-status" style="display: none; background: rgba(0, 212, 170, 0.1); border: 1px solid #00d4aa; border-radius: 8px; padding: 15px; margin-bottom: 20px;">
+                        <h3 style="color: #00d4aa; margin: 0 0 10px 0;">🔄 Current Processing Run</h3>
+                        <div id="current-run-details"></div>
+                        <div id="current-run-progress" style="margin-top: 10px;">
+                            <div style="width: 100%; background: rgba(255,255,255,0.1); border-radius: 4px; overflow: hidden;">
+                                <div id="progress-bar" style="width: 0%; height: 4px; background: #00d4aa; transition: width 0.3s;"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Live Logs -->
+                    <div style="margin-bottom: 20px;">
+                        <h3 style="color: #00d4aa;">📡 Live Logs</h3>
+                        <div id="live-logs" style="background: rgba(23, 23, 35, 0.9); border-radius: 8px; padding: 15px; max-height: 300px; overflow-y: auto; font-family: 'Courier New', monospace; font-size: 12px; border: 1px solid #3a3a4a;">
+                            <div style="color: #888; text-align: center;">No active processing runs...</div>
+                        </div>
+                        <div style="text-align: center; margin-top: 10px;">
+                            <button onclick="refreshLiveLogs()" class="btn" style="background: #00d4aa; font-size: 12px; padding: 5px 15px;">
+                                🔄 Refresh Logs
+                            </button>
+                            <button onclick="clearLiveLogs()" class="btn" style="background: #ff6b6b; font-size: 12px; padding: 5px 15px; margin-left: 10px;">
+                                🗑️ Clear
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Recent Runs History -->
+                    <div>
+                        <h3 style="color: #00d4aa;">📈 Recent Processing Runs</h3>
+                        <div id="recent-runs" style="max-height: 400px; overflow-y: auto;">
+                            <div style="color: #888; text-align: center; padding: 20px;">Loading recent runs...</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function updateAnalyticsType() {
+            const analyticsType = document.querySelector('input[name="analyticsType"]:checked').value;
+            const ticketFiles = document.getElementById('ticket-files');
+            const chatFiles = document.getElementById('chat-files');
+            const performancePeriodSection = document.getElementById('performance-period-section');
+            const agentSelectionSection = document.getElementById('agent-selection-section');
+            const dateRangeSection = document.querySelector('.section h2').parentElement;
+            const aiSection = document.getElementById('ai-assistant-section');
+            
+            // Hide all file sections and AI section first
+            ticketFiles.classList.add('hidden');
+            chatFiles.classList.add('hidden');
+            if (aiSection) aiSection.style.display = 'none';
+            
+            if (analyticsType === 'tickets') {
+                ticketFiles.classList.remove('hidden');
+                performancePeriodSection.style.display = 'none';
+                // Show date range for tickets
+                Array.from(document.querySelectorAll('.section')).forEach(section => {
+                    if (section.querySelector('h2') && section.querySelector('h2').textContent.includes('Date Range')) {
+                        section.style.display = 'block';
+                    }
+                });
+            } else if (analyticsType === 'chats') {
+                chatFiles.classList.remove('hidden');
+                performancePeriodSection.style.display = 'none';
+                // Show date range for chats
+                Array.from(document.querySelectorAll('.section')).forEach(section => {
+                    if (section.querySelector('h2') && section.querySelector('h2').textContent.includes('Date Range')) {
+                        section.style.display = 'block';
+                    }
+                });
+            } else if (analyticsType === 'agent_performance') {
+                ticketFiles.classList.remove('hidden'); // Agent performance uses ticket data
+                performancePeriodSection.style.display = 'block';
+                agentSelectionSection.style.display = 'none';
+                // Hide date range section for agent performance
+                Array.from(document.querySelectorAll('.section')).forEach(section => {
+                    if (section.querySelector('h2') && section.querySelector('h2').textContent.includes('Date Range')) {
+                        section.style.display = 'none';
+                    }
+                });
+            } else if (analyticsType === 'combined') {
+                // Show both ticket and chat file sections
+                ticketFiles.classList.remove('hidden');
+                chatFiles.classList.remove('hidden');
+                performancePeriodSection.style.display = 'none';
+                agentSelectionSection.style.display = 'none';
+                // Show date range for combined analytics
+                Array.from(document.querySelectorAll('.section')).forEach(section => {
+                    if (section.querySelector('h2') && section.querySelector('h2').textContent.includes('Date Range')) {
+                        section.style.display = 'block';
+                    }
+                });
+            } else if (analyticsType === 'individual_agent') {
+                ticketFiles.classList.remove('hidden'); // Individual agent uses ticket data
+                performancePeriodSection.style.display = 'none';
+                agentSelectionSection.style.display = 'block';
+                // Hide date range section for individual agent
+                Array.from(document.querySelectorAll('.section')).forEach(section => {
+                    if (section.querySelector('h2') && section.querySelector('h2').textContent.includes('Date Range')) {
+                        section.style.display = 'none';
+                    }
+                });
+            } else if (analyticsType === 'ai_assistant') {
+                // For AI assistant, show both file types and hide date/period sections
+                ticketFiles.classList.remove('hidden');
+                chatFiles.classList.remove('hidden');
+                performancePeriodSection.style.display = 'none';
+                agentSelectionSection.style.display = 'none';
+                // Hide date range section for AI assistant
+                Array.from(document.querySelectorAll('.section')).forEach(section => {
+                    if (section.querySelector('h2') && section.querySelector('h2').textContent.includes('Date Range')) {
+                        section.style.display = 'none';
+                    }
+                });
+                // Show AI assistant interface
+                const aiSection = document.getElementById('ai-assistant-section');
+                if (aiSection) aiSection.style.display = 'block';
+            }
+        }
+        
+        function selectPerformancePeriod(element, period) {
+            // Update active state
+            document.querySelectorAll('#performance-period-section .date-option').forEach(opt => {
+                opt.classList.remove('active');
+            });
+            element.classList.add('active');
+            
+            // Update radio button
+            element.querySelector('input[type="radio"]').checked = true;
+        }
+
+        function selectIndividualPeriod(element, period) {
+            // Update active state
+            document.querySelectorAll('#agent-selection-section .date-option').forEach(opt => {
+                opt.classList.remove('active');
+            });
+            element.classList.add('active');
+            
+            // Update radio button
+            element.querySelector('input[type="radio"]').checked = true;
+        }
+
+        function updateFileSelection() {
+            const dataSource = document.querySelector('input[name="dataSource"]:checked').value;
+            const existingFiles = document.getElementById('existing-files');
+            const uploadedFiles = document.getElementById('uploaded-files');
+            
+            if (dataSource === 'existing') {
+                existingFiles.classList.remove('hidden');
+                uploadedFiles.classList.add('hidden');
+            } else {
+                existingFiles.classList.add('hidden');
+                uploadedFiles.classList.remove('hidden');
+            }
+            
+            // Update analytics type display when switching data sources
+            updateAnalyticsType();
+        }
+
+        function selectDateOption(element, type) {
+            // Remove active class from all options
+            document.querySelectorAll('.date-option').forEach(opt => opt.classList.remove('active'));
+            
+            // Add active class to selected option
+            element.classList.add('active');
+            
+            // Check the radio button
+            element.querySelector('input[type="radio"]').checked = true;
+            
+            // Enable/disable date inputs
+            document.getElementById('week-date').disabled = type !== 'week';
+            document.getElementById('day-date').disabled = type !== 'day';
+            document.getElementById('start-date').disabled = type !== 'custom';
+            document.getElementById('end-date').disabled = type !== 'custom';
+        }
+
+        function showAlert(message, type = 'success') {
+            const alertDiv = document.createElement('div');
+            alertDiv.className = `alert alert-${type}`;
+            alertDiv.innerHTML = message;
+            
+            const content = document.querySelector('.content');
+            content.insertBefore(alertDiv, content.firstChild);
+            
+            setTimeout(() => alertDiv.remove(), 5000);
+        }
+
+        function runAnalysis() {
+            const analyticsType = document.querySelector('input[name="analyticsType"]:checked').value;
+            
+            // Handle AI assistant separately
+            if (analyticsType === 'ai_assistant') {
+                showAlert('Please use the AI Assistant interface above to chat with your data. Select your files and initialize the AI assistant first.', 'info');
+                // Scroll to AI section
+                const aiSection = document.getElementById('ai-assistant-section');
+                if (aiSection) {
+                    aiSection.scrollIntoView({ behavior: 'smooth' });
+                }
+                return;
+            }
+            
+            const dateType = document.querySelector('input[name="dateType"]:checked').value;
+            const dataSource = document.querySelector('input[name="dataSource"]:checked').value;
+            const includeDelayed = document.getElementById('include-delayed').checked;
+            
+            // Get selected files based on analytics type and data source
+            let selectedFiles = [];
+            if (dataSource === 'existing') {
+                if (analyticsType === 'tickets' || analyticsType === 'agent_performance' || analyticsType === 'individual_agent') {
+                    selectedFiles = Array.from(document.querySelectorAll('input[name="ticketFiles"]:checked'))
+                        .map(cb => cb.value);
+                } else if (analyticsType === 'chats') {
+                    selectedFiles = Array.from(document.querySelectorAll('input[name="chatFiles"]:checked'))
+                        .map(cb => cb.value);
+                } else if (analyticsType === 'combined') {
+                    // For combined analytics, collect both ticket and chat files
+                    const ticketFiles = Array.from(document.querySelectorAll('input[name="ticketFiles"]:checked'))
+                        .map(cb => cb.value);
+                    const chatFiles = Array.from(document.querySelectorAll('input[name="chatFiles"]:checked'))
+                        .map(cb => cb.value);
+                    selectedFiles = [...ticketFiles, ...chatFiles];
+                    
+                    // Store separate lists for combined analytics
+                    window.selectedTicketFiles = ticketFiles;
+                    window.selectedChatFiles = chatFiles;
+                }
+            } else {
+                selectedFiles = Array.from(document.querySelectorAll('input[name="uploadedFiles"]:checked'))
+                    .map(cb => cb.value);
+            }
+            
+            if (selectedFiles.length === 0) {
+                showAlert('Please select at least one CSV file to analyze', 'error');
+                return;
+            }
+            
+            // Prepare date parameters or performance period
+            let dateParams = {};
+            
+            if (analyticsType === 'agent_performance') {
+                // Use performance period instead of date parameters
+                const performancePeriod = document.querySelector('input[name="performancePeriod"]:checked').value;
+                dateParams = { performancePeriod };
+            } else if (analyticsType === 'individual_agent') {
+                // Use individual period and selected agent
+                const individualPeriod = document.querySelector('input[name="individualPeriod"]:checked').value;
+                const selectedAgent = document.getElementById('agentSelect').value;
+                
+                if (!selectedAgent) {
+                    showAlert('Please select an agent to analyze', 'error');
+                    return;
+                }
+                
+                dateParams = { individualPeriod, selectedAgent };
+            } else {
+                // Regular date parameters for tickets/chats
+                dateParams = { dateType };
+                
+                if (dateType === 'week') {
+                const weekDate = document.getElementById('week-date').value;
+                if (!weekDate) {
+                    showAlert('Please select a week date', 'error');
+                    return;
+                }
+                dateParams.weekDate = weekDate;
+            } else if (dateType === 'day') {
+                const dayDate = document.getElementById('day-date').value;
+                if (!dayDate) {
+                    showAlert('Please select a day date', 'error');
+                    return;
+                }
+                dateParams.dayDate = dayDate;
+            } else if (dateType === 'custom') {
+                const startDate = document.getElementById('start-date').value;
+                const endDate = document.getElementById('end-date').value;
+                if (!startDate || !endDate) {
+                    showAlert('Please select both start and end dates', 'error');
+                    return;
+                }
+                dateParams.startDate = startDate;
+                dateParams.endDate = endDate;
+                }
+            }
+            
+            // Show loading
+            document.getElementById('loading').style.display = 'block';
+            
+            // Prepare request body
+            const requestBody = {
+                ...dateParams,
+                dataSource,
+                analyticsType,
+                selectedFiles,
+                includeDelayed
+            };
+
+            // Add separate file lists for combined analytics
+            if (analyticsType === 'combined' && window.selectedTicketFiles && window.selectedChatFiles) {
+                requestBody.ticketFiles = window.selectedTicketFiles;
+                requestBody.chatFiles = window.selectedChatFiles;
+            }
+
+            // Make API call
+            fetch('/analyze', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(requestBody)
+            })
+            .then(response => response.json())
+            .then(data => {
+                document.getElementById('loading').style.display = 'none';
+                
+                if (data.success) {
+                    // Build success message
+                    let successMsg = `Analysis completed! Processed ${data.records_processed} records from ${data.files_processed} files`;
+                    
+                    // Add Google Sheets link if available
+                    if (data.google_sheets_url) {
+                        successMsg += `<br><br>📊 <strong>Google Sheets:</strong> <a href="${data.google_sheets_url}" target="_blank" style="color: #007bff; text-decoration: none;">Open in Google Sheets</a>`;
+                    }
+                    
+                    // Show success message
+                    showAlert(successMsg);
+                    
+                    // Show latest dashboard link
+                    const latestDashboard = document.getElementById('latest-dashboard');
+                    const latestDashboardContent = document.getElementById('latest-dashboard-content');
+                    
+                    // Determine dashboard type and name
+                    let dashboardType = 'Dashboard';
+                    let dashboardUrl = data.dashboard_url;
+                    let summaryUrl = `/${data.result_path}/`;
+                    
+                    if (analyticsType === 'agent_performance') {
+                        dashboardType = 'Agent Performance Dashboard';
+                        summaryUrl += 'agent_performance_summary.txt';
+                    } else if (analyticsType === 'individual_agent') {
+                        dashboardType = 'Individual Agent Dashboard';
+                        dashboardUrl = data.dashboard_url;
+                        summaryUrl += 'individual_agent_summary.txt';
+                    } else if (analyticsType === 'tickets') {
+                        dashboardType = 'Ticket Analytics Dashboard';
+                        summaryUrl += 'ticket_analytics_summary.txt';
+                    } else if (analyticsType === 'chats') {
+                        dashboardType = 'Chat Analytics Dashboard';
+                        summaryUrl += 'chat_analytics_summary.txt';
+                    } else if (analyticsType === 'combined') {
+                        dashboardType = 'Combined Analytics Dashboard';
+                        summaryUrl += 'index.html'; // Combined uses main index
+                    }
+                    
+                    latestDashboardContent.innerHTML = `
+                        <div style="background: rgba(0, 212, 170, 0.1); padding: 20px; border-radius: 10px; border: 2px solid #00d4aa;">
+                            <h3 style="color: #00d4aa; margin-bottom: 15px;">🎯 ${dashboardType}</h3>
+                            <p style="color: #e0e0e0; margin-bottom: 15px;">
+                                Generated at ${new Date().toLocaleString()}<br>
+                                Records: ${data.records_processed.toLocaleString()} • Files: ${data.files_processed}
+                            </p>
+                            <div style="margin-top: 15px;">
+                                <a href="${dashboardUrl}" class="btn" target="_blank" style="margin-right: 10px;">📊 View Dashboard</a>
+                                <a href="/${data.result_path}/index.html" class="btn" target="_blank" style="margin-right: 10px;">📋 Full Report</a>
+                                <a href="${summaryUrl}" class="btn" target="_blank">📄 Summary</a>
+                            </div>
+                        </div>
+                    `;
+                    latestDashboard.style.display = 'block';
+                    
+                    // Results are handled by the Results Browser section
+                    
+                    // Scroll to latest dashboard section
+                    latestDashboard.scrollIntoView({ behavior: 'smooth' });
+                } else {
+                    showAlert(data.error || 'Analysis failed', 'error');
+                }
+            })
+            .catch(error => {
+                document.getElementById('loading').style.display = 'none';
+                showAlert('Error: ' + error.message, 'error');
+            });
+        }
+
+        // Auto-detect and select combined analytics if both file types are present
+        function autoDetectAnalyticsType() {
+            // Check if both ticket and chat files are available
+            const hasTicketFiles = {% if ticket_files and ticket_files|length > 0 %}true{% else %}false{% endif %};
+            const hasChatFiles = {% if chat_files and chat_files|length > 0 %}true{% else %}false{% endif %};
+            
+            if (hasTicketFiles && hasChatFiles) {
+                // Select combined analytics option
+                const combinedOption = document.querySelector('input[name="analyticsType"][value="combined"]');
+                if (combinedOption) {
+                    combinedOption.checked = true;
+                    console.log('🎯 Auto-selected Combined Analytics - both ticket and chat files detected');
+                }
+            }
+        }
+
+        // Initialize file selection on page load
+        updateFileSelection();
+        autoDetectAnalyticsType();
+        updateAnalyticsType();
+
+        // Results Browser Functions
+        function toggleResultsBrowser() {
+            const browser = document.getElementById('results-browser');
+            const toggle = document.getElementById('results-toggle');
+            
+            if (browser.style.display === 'none' || browser.style.display === '') {
+                browser.style.display = 'block';
+                toggle.textContent = '▼';
+                toggle.style.transform = 'rotate(90deg)';
+                loadResultsFromFolder();
+            } else {
+                browser.style.display = 'none';
+                toggle.textContent = '▶';
+                toggle.style.transform = 'rotate(0deg)';
+            }
+        }
+
+        function loadResultsFromFolder() {
+            const loading = document.getElementById('results-loading');
+            const resultsColumns = document.getElementById('results-columns');
+            
+            loading.style.display = 'block';
+            resultsColumns.style.display = 'none';
+            
+            // Fetch results from the server
+            fetch('/api/results')
+                .then(response => response.json())
+                .then(data => {
+                    loading.style.display = 'none';
+                    if (data.success) {
+                        displayResultsInColumns(data.results);
+                        resultsColumns.style.display = 'block';
+                    } else {
+                        const ticketResults = document.getElementById('ticket-results');
+                        const chatResults = document.getElementById('chat-results');
+                        ticketResults.innerHTML = '<p>Error loading results: ' + (data.error || 'Unknown error') + '</p>';
+                        chatResults.innerHTML = '<p>Error loading results: ' + (data.error || 'Unknown error') + '</p>';
+                        resultsColumns.style.display = 'block';
+                    }
+                })
+                .catch(error => {
+                    loading.style.display = 'none';
+                    const ticketResults = document.getElementById('ticket-results');
+                    const chatResults = document.getElementById('chat-results');
+                    ticketResults.innerHTML = '<p>Error: ' + error.message + '</p>';
+                    chatResults.innerHTML = '<p>Error: ' + error.message + '</p>';
+                    resultsColumns.style.display = 'block';
+                });
+        }
+
+        function displayResultsInColumns(results) {
+            const ticketResults = document.getElementById('ticket-results');
+            const chatResults = document.getElementById('chat-results');
+            
+            // Separate results by type
+            const ticketAnalyses = results.filter(r => 
+                r.type === 'Ticket Analytics' || 
+                r.type === 'Agent Performance' || 
+                r.type === 'Individual Agent'
+            ).slice(0, 6); // Limit to last 6
+            
+            const chatAnalyses = results.filter(r => 
+                r.type === 'Chat Analytics'
+            ).slice(0, 6); // Limit to last 6
+            
+            // Display ticket results
+            if (ticketAnalyses.length === 0) {
+                ticketResults.innerHTML = '<p style="text-align: center; color: #888;">No ticket analytics found</p>';
+            } else {
+                let ticketHtml = '';
+                ticketAnalyses.forEach(result => {
+                    const analysisType = getAnalysisTypeIcon(result);
+                    ticketHtml += `
+                        <div class="result-item" style="margin-bottom: 10px;">
+                            <div class="result-title" style="font-size: 14px;">
+                                ${analysisType} ${result.name}
+                            </div>
+                            <div class="result-meta" style="font-size: 12px;">
+                                Created: ${result.created} | ${result.type}
+                            </div>
+                            <div style="margin-top: 8px;">
+                                <a href="/results/${result.path}/index.html" class="btn" target="_blank" style="font-size: 11px; padding: 5px 10px;">📋 Index</a>
+                                ${getAnalysisTypeButtons(result, true)}
+                            </div>
+                        </div>
+                    `;
+                });
+                ticketResults.innerHTML = ticketHtml;
+            }
+            
+            // Display chat results
+            if (chatAnalyses.length === 0) {
+                chatResults.innerHTML = '<p style="text-align: center; color: #888;">No chat analytics found</p>';
+            } else {
+                let chatHtml = '';
+                chatAnalyses.forEach(result => {
+                    const analysisType = getAnalysisTypeIcon(result);
+                    chatHtml += `
+                        <div class="result-item" style="margin-bottom: 10px;">
+                            <div class="result-title" style="font-size: 14px;">
+                                ${analysisType} ${result.name}
+                            </div>
+                            <div class="result-meta" style="font-size: 12px;">
+                                Created: ${result.created} | ${result.type}
+                            </div>
+                            <div style="margin-top: 8px;">
+                                <a href="/results/${result.path}/index.html" class="btn" target="_blank" style="font-size: 11px; padding: 5px 10px;">📋 Index</a>
+                                ${getAnalysisTypeButtons(result, true)}
+                            </div>
+                        </div>
+                    `;
+                });
+                chatResults.innerHTML = chatHtml;
+            }
+        }
+
+        function getAnalysisTypeIcon(result) {
+            if (result.type === 'Individual Agent') return '👤';
+            if (result.type === 'Agent Performance') return '🎯';
+            if (result.type === 'Chat Analytics') return '💬';
+            if (result.type === 'Ticket Analytics') return '📋';
+            return '📊';
+        }
+
+        function getAnalysisTypeButtons(result, compact = false) {
+            let buttons = '';
+            let dashboardType = '';
+            const btnSize = compact ? 'font-size: 10px; padding: 4px 8px;' : 'font-size: 12px; padding: 8px 15px;';
+            
+            // Dashboard button based on analysis type
+            if (result.type === 'Individual Agent') {
+                dashboardType = 'individual_agent';
+                buttons += `<a href="/results/${result.path}/individual_agent_dashboard.html" class="btn" target="_blank" style="${btnSize}">📊 Dashboard</a>`;
+                if (!compact) {
+                    buttons += `<a href="/results/${result.path}/individual_agent_summary.txt" class="btn" target="_blank" style="${btnSize}">📄 Summary</a>`;
+                }
+            } else if (result.type === 'Agent Performance') {
+                dashboardType = 'agent_performance';
+                buttons += `<a href="/results/${result.path}/agent_performance_dashboard.html" class="btn" target="_blank" style="${btnSize}">📊 Dashboard</a>`;
+                if (!compact) {
+                    buttons += `<a href="/results/${result.path}/agent_performance_summary.txt" class="btn" target="_blank" style="${btnSize}">📄 Summary</a>`;
+                }
+            } else if (result.type === 'Chat Analytics') {
+                dashboardType = 'chat';
+                buttons += `<a href="/results/${result.path}/chat_analytics_dashboard.html" class="btn" target="_blank" style="${btnSize}">📊 Dashboard</a>`;
+                if (!compact) {
+                    buttons += `<a href="/results/${result.path}/chat_analytics_summary.txt" class="btn" target="_blank" style="${btnSize}">📄 Summary</a>`;
+                    if (result.hasCSV) {
+                        buttons += `<a href="/results/${result.path}/chats_transformed.csv" class="btn" target="_blank" style="${btnSize}">💾 CSV</a>`;
+                    }
+                }
+            } else if (result.type === 'Ticket Analytics') {
+                dashboardType = 'ticket';
+                buttons += `<a href="/results/${result.path}/ticket_analytics_dashboard.html" class="btn" target="_blank" style="${btnSize}">📊 Dashboard</a>`;
+                if (!compact) {
+                    buttons += `<a href="/results/${result.path}/ticket_analytics_summary.txt" class="btn" target="_blank" style="${btnSize}">📄 Summary</a>`;
+                    if (result.hasCSV) {
+                        buttons += `<a href="/results/${result.path}/tickets_transformed.csv" class="btn" target="_blank" style="${btnSize}">💾 CSV</a>`;
+                    }
+                }
+            }
+            
+            // Add export buttons if we have a dashboard type (only in full mode)
+            if (dashboardType && !compact) {
+                buttons += '<div style="margin-top: 10px; padding-top: 10px; border-top: 1px solid #e0e0e0;">';
+                buttons += '<small style="color: #7f8c8d;">Export:</small><br>';
+                buttons += `<button onclick="exportToPNG('${result.path}', '${dashboardType}')" class="btn" style="background: #e74c3c; ${btnSize}">🖼️ PNG</button>`;
+                buttons += `<a href="/export/${result.path}/${dashboardType}/pdf" class="btn" style="background: #e67e22; ${btnSize}">📄 PDF</a>`;
+                buttons += `<button onclick="exportToGoogleDocs('${result.path}', '${dashboardType}')" class="btn" style="background: #3498db; ${btnSize}">📝 Google Docs</button>`;
+                buttons += '</div>';
+            }
+            
+            return buttons;
+        }
+
+        function openResultsFolder() {
+            // Try to open the results folder
+            const resultsPath = window.location.origin + '/results';
+            
+            // For desktop apps, try to open file manager
+            if (window.showDirectoryPicker) {
+                // Modern File System Access API (Chrome 86+)
+                showAlert('Opening results folder... (Modern browsers)', 'info');
+            } else {
+                // Fallback: show path and try to open
+                showAlert('Results are stored in: ./results/ folder in your project directory', 'info');
+                // Try to open the web results directory
+                window.open('/results', '_blank');
+            }
+        }
+
+        function exportToPNG(resultPath, dashboardType) {
+            // Show loading message
+            const button = event.target;
+            const originalText = button.innerHTML;
+            button.innerHTML = '⏳ Exporting...';
+            button.disabled = true;
+            
+            // Get resolution setting
+            const resolutionSelect = document.getElementById('png-resolution');
+            const resolution = resolutionSelect ? resolutionSelect.value : '1920x1080';
+            const [width, height] = resolution.split('x').map(Number);
+            
+            // Create download link with resolution parameters
+            const exportUrl = `/export/${resultPath}/${dashboardType}/png?width=${width}&height=${height}`;
+            
+            // Create temporary link and click it
+            const link = document.createElement('a');
+            link.href = exportUrl;
+            link.download = `${dashboardType}_dashboard_${resultPath}.png`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            
+            // Reset button after short delay
+            button.innerHTML = '✅ Downloaded!';
+            setTimeout(() => {
+                button.innerHTML = originalText;
+                button.disabled = false;
+            }, 2000);
+        }
+
+        function exportToGoogleDocs(resultPath, dashboardType) {
+            // Show loading message
+            const button = event.target;
+            const originalText = button.innerHTML;
+            button.innerHTML = '⏳ Exporting...';
+            button.disabled = true;
+            
+            fetch(`/export/${resultPath}/${dashboardType}/google_docs`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        // Open Google Doc in new tab
+                        window.open(data.url, '_blank');
+                        button.innerHTML = '✅ Exported!';
+                        setTimeout(() => {
+                            button.innerHTML = originalText;
+                            button.disabled = false;
+                        }, 2000);
+                    } else {
+                        alert('Export failed: ' + (data.error || 'Unknown error'));
+                        button.innerHTML = originalText;
+                        button.disabled = false;
+                    }
+                })
+                .catch(error => {
+                    console.error('Export error:', error);
+                    alert('Export failed: ' + error.message);
+                    button.innerHTML = originalText;
+                    button.disabled = false;
+                });
+        }
+
+        // Google Docs Configuration Functions
+        function checkGoogleDocsStatus() {
+            fetch('/check_gdocs_config')
+                .then(response => response.json())
+                .then(data => {
+                    const statusText = document.getElementById('gdocs-status-text');
+                    const setupDiv = document.getElementById('gdocs-setup');
+                    const configuredDiv = document.getElementById('gdocs-configured');
+                    
+                    if (data.configured) {
+                        statusText.textContent = '✅ Google Docs export is ready';
+                        statusText.style.color = '#28a745';
+                        setupDiv.style.display = 'none';
+                        configuredDiv.style.display = 'block';
+                    } else {
+                        statusText.textContent = '❌ Google Docs export needs configuration';
+                        statusText.style.color = '#dc3545';
+                        setupDiv.style.display = 'block';
+                        configuredDiv.style.display = 'none';
+                    }
+                })
+                .catch(error => {
+                    console.error('Status check failed:', error);
+                    document.getElementById('gdocs-status-text').textContent = '⚠️ Unable to check configuration';
+                });
+        }
+
+        function testGoogleDocsConnection() {
+            const button = event.target;
+            const originalText = button.innerHTML;
+            button.innerHTML = 'Testing...';
+            button.disabled = true;
+            
+            fetch('/test_gdocs_connection')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        alert('✅ Google Docs connection successful!');
+                    } else {
+                        alert('❌ Connection failed: ' + (data.error || 'Unknown error'));
+                    }
+                    button.innerHTML = originalText;
+                    button.disabled = false;
+                })
+                .catch(error => {
+                    console.error('Test failed:', error);
+                    alert('❌ Test failed: ' + error.message);
+                    button.innerHTML = originalText;
+                    button.disabled = false;
+                });
+        }
+
+        function resetGoogleDocsCredentials() {
+            if (confirm('Are you sure you want to reset Google Docs credentials? You will need to reconfigure the integration.')) {
+                fetch('/reset_gdocs_credentials', { method: 'POST' })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            alert('✅ Credentials reset successfully');
+                            checkGoogleDocsStatus();
+                        } else {
+                            alert('❌ Reset failed: ' + (data.error || 'Unknown error'));
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Reset failed:', error);
+                        alert('❌ Reset failed: ' + error.message);
+                    });
+            }
+        }
+
+        // Toggle collapsible sections
+        function toggleSection(contentId, toggleId) {
+            const content = document.getElementById(contentId);
+            const toggle = document.getElementById(toggleId);
+            
+            if (content.style.display === 'none' || content.style.display === '') {
+                content.style.display = 'block';
+                toggle.textContent = '▲';
+            } else {
+                content.style.display = 'none';
+                toggle.textContent = '▼';
+            }
+        }
+
+        // Handle credentials upload
+        document.addEventListener('DOMContentLoaded', function() {
+            // Check Google Docs status on page load
+            checkGoogleDocsStatus();
+
+            // Handle credentials upload form
+            const credentialsForm = document.getElementById('credentials-upload-form');
+            credentialsForm.addEventListener('submit', function(e) {
+                e.preventDefault();
+                
+                const fileInput = document.getElementById('credentials-file');
+                const file = fileInput.files[0];
+                
+                if (!file) {
+                    alert('Please select a credentials JSON file');
+                    return;
+                }
+                
+                if (!file.name.endsWith('.json')) {
+                    alert('Please select a JSON file');
+                    return;
+                }
+                
+                const formData = new FormData();
+                formData.append('credentials', file);
+                
+                const submitBtn = credentialsForm.querySelector('button[type="submit"]');
+                const originalText = submitBtn.innerHTML;
+                submitBtn.innerHTML = 'Uploading...';
+                submitBtn.disabled = true;
+                
+                fetch('/upload_gdocs_credentials', {
+                    method: 'POST',
+                    body: formData
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        alert('✅ Credentials uploaded successfully!');
+                        fileInput.value = '';
+                        checkGoogleDocsStatus();
+                    } else {
+                        alert('❌ Upload failed: ' + (data.error || 'Unknown error'));
+                    }
+                    submitBtn.innerHTML = originalText;
+                    submitBtn.disabled = false;
+                })
+                .catch(error => {
+                    console.error('Upload failed:', error);
+                    alert('❌ Upload failed: ' + error.message);
+                    submitBtn.innerHTML = originalText;
+                    submitBtn.disabled = false;
+                });
+            });
+        });
+
+        // Logging Functions
+        function toggleLogsSection() {
+            const logsSection = document.getElementById('logs-section');
+            const toggle = document.getElementById('logs-toggle');
+            
+            if (logsSection.style.display === 'none' || logsSection.style.display === '') {
+                logsSection.style.display = 'block';
+                toggle.textContent = '▼';
+                loadProcessingLogs();
+                startLiveLogPolling();
+            } else {
+                logsSection.style.display = 'none';
+                toggle.textContent = '▶';
+                stopLiveLogPolling();
+            }
+        }
+
+        let liveLogPollingInterval;
+        let lastLogTimestamp = null;
+
+        function startLiveLogPolling() {
+            // Poll every 2 seconds for live logs
+            liveLogPollingInterval = setInterval(refreshLiveLogs, 2000);
+        }
+
+        function stopLiveLogPolling() {
+            if (liveLogPollingInterval) {
+                clearInterval(liveLogPollingInterval);
+                liveLogPollingInterval = null;
+            }
+        }
+
+        function loadProcessingLogs() {
+            fetch('/api/processing-logs')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        displayRecentRuns(data.runs);
+                        if (data.current_run) {
+                            showCurrentRunStatus(data.current_run);
+                        }
+                    } else {
+                        document.getElementById('recent-runs').innerHTML = 
+                            '<div style="color: #ff6b6b; text-align: center; padding: 20px;">Error loading logs: ' + data.error + '</div>';
+                    }
+                })
+                .catch(error => {
+                    document.getElementById('recent-runs').innerHTML = 
+                        '<div style="color: #ff6b6b; text-align: center; padding: 20px;">Error: ' + error.message + '</div>';
+                });
+        }
+
+        function refreshLiveLogs() {
+            const url = lastLogTimestamp ? 
+                `/api/live-logs?since=${encodeURIComponent(lastLogTimestamp)}` : 
+                '/api/live-logs';
+                
+            fetch(url)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        if (data.current_run) {
+                            showCurrentRunStatus(data.current_run);
+                        } else {
+                            hideCurrentRunStatus();
+                        }
+                        
+                        if (data.logs && data.logs.length > 0) {
+                            appendLiveLogs(data.logs);
+                            // Update last timestamp
+                            lastLogTimestamp = data.logs[data.logs.length - 1].timestamp;
+                        }
+                    }
+                })
+                .catch(error => {
+                    console.error('Failed to refresh live logs:', error);
+                });
+        }
+
+        function showCurrentRunStatus(runData) {
+            const statusDiv = document.getElementById('current-run-status');
+            const detailsDiv = document.getElementById('current-run-details');
+            
+            const startTime = new Date(runData.start_time).toLocaleTimeString();
+            const duration = runData.start_time ? 
+                Math.floor((new Date() - new Date(runData.start_time)) / 1000) : 0;
+            
+            detailsDiv.innerHTML = `
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; font-size: 12px;">
+                    <div><strong>Run ID:</strong> ${runData.run_id}</div>
+                    <div><strong>Type:</strong> ${runData.analytics_type}</div>
+                    <div><strong>Started:</strong> ${startTime}</div>
+                    <div><strong>Duration:</strong> ${duration}s</div>
+                    <div><strong>Records:</strong> ${runData.records_processed || 0}</div>
+                    <div><strong>Status:</strong> <span style="color: #00d4aa;">${runData.status}</span></div>
+                </div>
+            `;
+            
+            statusDiv.style.display = 'block';
+        }
+
+        function hideCurrentRunStatus() {
+            document.getElementById('current-run-status').style.display = 'none';
+        }
+
+        function appendLiveLogs(logs) {
+            const liveLogsDiv = document.getElementById('live-logs');
+            
+            // Clear "no active runs" message if present
+            if (liveLogsDiv.innerHTML.includes('No active processing runs')) {
+                liveLogsDiv.innerHTML = '';
+            }
+            
+            logs.forEach(log => {
+                const timestamp = new Date(log.timestamp).toLocaleTimeString();
+                const levelColor = getLevelColor(log.level);
+                const stageColor = getStageColor(log.stage);
+                
+                const logEntry = document.createElement('div');
+                logEntry.style.marginBottom = '4px';
+                logEntry.innerHTML = `
+                    <span style="color: #888;">[${timestamp}]</span>
+                    <span style="color: ${levelColor}; font-weight: bold;">${log.level}</span>
+                    <span style="color: ${stageColor};">[${log.stage}]</span>
+                    <span style="color: #e0e0e0;">${log.message}</span>
+                `;
+                
+                liveLogsDiv.appendChild(logEntry);
+            });
+            
+            // Auto-scroll to bottom
+            liveLogsDiv.scrollTop = liveLogsDiv.scrollHeight;
+        }
+
+        function getLevelColor(level) {
+            switch (level) {
+                case 'ERROR': return '#ff6b6b';
+                case 'WARNING': return '#feca57';
+                case 'SUCCESS': return '#00d4aa';
+                case 'INFO': 
+                default: return '#a0a0a0';
+            }
+        }
+
+        function getStageColor(stage) {
+            switch (stage) {
+                case 'INIT': return '#667eea';
+                case 'PROCESSING': return '#764ba2';
+                case 'SHEETS_SYNC': return '#00d4aa';
+                case 'COMPLETE': return '#48cab2';
+                case 'ERROR': return '#ff6b6b';
+                default: return '#a0a0a0';
+            }
+        }
+
+        function clearLiveLogs() {
+            document.getElementById('live-logs').innerHTML = 
+                '<div style="color: #888; text-align: center;">Logs cleared...</div>';
+            lastLogTimestamp = null;
+        }
+
+        function displayRecentRuns(runs) {
+            const recentRunsDiv = document.getElementById('recent-runs');
+            
+            if (runs.length === 0) {
+                recentRunsDiv.innerHTML = '<div style="color: #888; text-align: center; padding: 20px;">No processing runs found</div>';
+                return;
+            }
+            
+            let runsHtml = '';
+            runs.forEach((run, index) => {
+                const startTime = new Date(run.start_time).toLocaleString();
+                const endTime = run.end_time ? new Date(run.end_time).toLocaleString() : 'Running...';
+                const duration = run.total_duration_ms ? 
+                    (run.total_duration_ms < 1000 ? `${run.total_duration_ms}ms` : 
+                     run.total_duration_ms < 60000 ? `${(run.total_duration_ms/1000).toFixed(1)}s` :
+                     `${(run.total_duration_ms/60000).toFixed(1)}m`) : 'N/A';
+                
+                const statusColor = run.status === 'COMPLETED' ? '#00d4aa' : 
+                                  run.status === 'FAILED' ? '#ff6b6b' : '#feca57';
+                
+                const errorCount = run.log_entries ? 
+                    run.log_entries.filter(e => e.level === 'ERROR').length : 0;
+                const warningCount = run.log_entries ? 
+                    run.log_entries.filter(e => e.level === 'WARNING').length : 0;
+                
+                runsHtml += `
+                    <div style="background: rgba(23, 23, 35, 0.8); border-radius: 8px; padding: 15px; margin-bottom: 10px; border-left: 4px solid ${statusColor};">
+                        <div style="display: grid; grid-template-columns: 1fr auto; gap: 15px; align-items: start;">
+                            <div>
+                                <div style="color: #00d4aa; font-weight: bold; margin-bottom: 5px;">
+                                    ${run.analytics_type.toUpperCase()} - ${run.date_range || 'No date range'}
+                                </div>
+                                <div style="font-size: 12px; color: #a0a0a0; margin-bottom: 8px;">
+                                    <strong>Started:</strong> ${startTime} • 
+                                    <strong>Duration:</strong> ${duration} • 
+                                    <strong>Records:</strong> ${run.records_processed || 0}
+                                </div>
+                                ${run.files_processed && run.files_processed.length > 0 ? 
+                                    `<div style="font-size: 11px; color: #888; margin-bottom: 5px;">
+                                        <strong>Files:</strong> ${run.files_processed.join(', ')}
+                                    </div>` : ''}
+                                ${run.spreadsheet_url ? 
+                                    `<div style="font-size: 11px; margin-top: 5px;">
+                                        <a href="${run.spreadsheet_url}" target="_blank" style="color: #00d4aa; text-decoration: none;">
+                                            📊 View Google Sheet
+                                        </a>
+                                    </div>` : ''}
+                            </div>
+                            <div style="text-align: right;">
+                                <div style="color: ${statusColor}; font-weight: bold; margin-bottom: 5px;">
+                                    ${run.status}
+                                </div>
+                                <div style="font-size: 11px; color: #a0a0a0;">
+                                    ${errorCount > 0 ? `❌ ${errorCount} errors<br>` : ''}
+                                    ${warningCount > 0 ? `⚠️ ${warningCount} warnings<br>` : ''}
+                                    ${run.sheets_updated ? '📊 Sheets updated' : ''}
+                                </div>
+                            </div>
+                        </div>
+                        ${index === 0 && run.log_entries && run.log_entries.length > 0 ? 
+                            `<details style="margin-top: 10px;">
+                                <summary style="color: #00d4aa; cursor: pointer; font-size: 12px;">Show Recent Log Entries</summary>
+                                <div style="margin-top: 8px; font-family: 'Courier New', monospace; font-size: 10px; max-height: 150px; overflow-y: auto; background: rgba(0,0,0,0.3); padding: 8px; border-radius: 4px;">
+                                    ${run.log_entries.slice(-10).map(entry => {
+                                        const time = new Date(entry.timestamp).toLocaleTimeString();
+                                        const levelColor = getLevelColor(entry.level);
+                                        return `<div style="margin-bottom: 2px;"><span style="color: #888;">[${time}]</span> <span style="color: ${levelColor};">${entry.level}</span> <span style="color: #e0e0e0;">${entry.message}</span></div>`;
+                                    }).join('')}
+                                </div>
+                            </details>` : ''}
+                    </div>
+                `;
+            });
+            
+            recentRunsDiv.innerHTML = runsHtml;
+        }
+
+        // AI Assistant Functions
+        let aiInitialized = false;
+        let conversationHistory = [];
+
+        function initializeAI() {
+            const apiKey = document.getElementById('gemini-api-key').value;
+            if (!apiKey) {
+                showAlert('Please enter your Gemini API key', 'error');
+                return;
+            }
+
+            // Check if we have data files selected
+            const analyticsType = document.querySelector('input[name="analyticsType"]:checked').value;
+            if (analyticsType !== 'ai_assistant') {
+                showAlert('Please select AI-Powered Analysis mode first', 'error');
+                return;
+            }
+
+            // Get selected files
+            const selectedTicketFiles = Array.from(document.querySelectorAll('input[name="ticketFiles"]:checked')).map(cb => cb.value);
+            const selectedChatFiles = Array.from(document.querySelectorAll('input[name="chatFiles"]:checked')).map(cb => cb.value);
+
+            if (selectedTicketFiles.length === 0 && selectedChatFiles.length === 0) {
+                showAlert('Please select at least one data file', 'error');
+                return;
+            }
+
+            // Store API key and mark as initialized
+            localStorage.setItem('gemini_api_key', apiKey);
+            aiInitialized = true;
+
+            // Enable chat interface
+            document.getElementById('ai-input').disabled = false;
+            document.getElementById('ai-send-btn').disabled = false;
+
+            // Add welcome message
+            addAIMessage('ai', `Hello! I'm your AI assistant. I have access to your selected data files:\n• Tickets: ${selectedTicketFiles.join(', ') || 'None'}\n• Chats: ${selectedChatFiles.join(', ') || 'None'}\n\nWhat would you like to know about your support data?`);
+
+            showAlert('AI Assistant initialized successfully!', 'success');
+        }
+
+        function testGeminiConnection() {
+            const apiKey = document.getElementById('gemini-api-key').value;
+            if (!apiKey) {
+                showAlert('Please enter your Gemini API key first', 'error');
+                return;
+            }
+
+            // Test connection with a simple API call
+            fetch('/api/test-gemini', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    api_key: apiKey
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    showAlert('✅ Gemini API connection successful!', 'success');
+                } else {
+                    showAlert('❌ Connection failed: ' + data.message, 'error');
+                }
+            })
+            .catch(error => {
+                showAlert('❌ Connection test failed: ' + error.message, 'error');
+            });
+        }
+
+        function sendAIMessage() {
+            const input = document.getElementById('ai-input');
+            const message = input.value.trim();
+            
+            if (!message) return;
+            if (!aiInitialized) {
+                showAlert('Please initialize the AI assistant first', 'error');
+                return;
+            }
+
+            // Add user message
+            addAIMessage('user', message);
+            input.value = '';
+
+            // Disable input while processing
+            const sendBtn = document.getElementById('ai-send-btn');
+            sendBtn.disabled = true;
+            sendBtn.textContent = 'Sending...';
+
+            // Get selected files for context
+            const selectedTicketFiles = Array.from(document.querySelectorAll('input[name="ticketFiles"]:checked')).map(cb => cb.value);
+            const selectedChatFiles = Array.from(document.querySelectorAll('input[name="chatFiles"]:checked')).map(cb => cb.value);
+
+            // Send to backend
+            fetch('/api/ai-chat', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    message: message,
+                    api_key: localStorage.getItem('gemini_api_key'),
+                    ticket_files: selectedTicketFiles,
+                    chat_files: selectedChatFiles,
+                    conversation_history: conversationHistory
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    addAIMessage('ai', data.response);
+                    // Update conversation history
+                    conversationHistory.push({ role: 'user', content: message });
+                    conversationHistory.push({ role: 'assistant', content: data.response });
+                } else {
+                    addAIMessage('ai', '❌ Sorry, I encountered an error: ' + data.message);
+                }
+            })
+            .catch(error => {
+                addAIMessage('ai', '❌ Connection error: ' + error.message);
+            })
+            .finally(() => {
+                sendBtn.disabled = false;
+                sendBtn.textContent = 'Send';
+            });
+        }
+
+        function askQuickQuestion(question) {
+            if (!aiInitialized) {
+                showAlert('Please initialize the AI assistant first', 'error');
+                return;
+            }
+            
+            document.getElementById('ai-input').value = question;
+            sendAIMessage();
+        }
+
+        function addAIMessage(sender, message) {
+            const messagesDiv = document.getElementById('ai-messages');
+            
+            // Remove status message if it exists
+            const statusMsg = messagesDiv.querySelector('.ai-status');
+            if (statusMsg) statusMsg.remove();
+
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `ai-message ${sender}`;
+            messageDiv.textContent = message;
+
+            messagesDiv.appendChild(messageDiv);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+
+        // Handle Enter key in AI input
+        document.addEventListener('DOMContentLoaded', function() {
+            const aiInput = document.getElementById('ai-input');
+            if (aiInput) {
+                aiInput.addEventListener('keypress', function(e) {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        sendAIMessage();
+                    }
+                });
+            }
+
+            // Load saved API key
+            const savedApiKey = localStorage.getItem('gemini_api_key');
+            if (savedApiKey) {
+                document.getElementById('gemini-api-key').value = savedApiKey;
+            }
+            
+            // Debug radio button visibility
+            console.log('=== DEBUGGING RADIO BUTTONS ===');
+            const radios = document.querySelectorAll('input[name="analyticsType"]');
+            console.log('Found', radios.length, 'radio buttons');
+            
+            radios.forEach((radio, index) => {
+                const label = radio.closest('label');
+                const formGroup = radio.closest('.form-group');
+                const section = radio.closest('.section');
+                
+                console.log(`Radio ${index + 1}: ${radio.value}`);
+                console.log('  Radio display:', window.getComputedStyle(radio).display);
+                console.log('  Label display:', window.getComputedStyle(label).display);
+                console.log('  FormGroup display:', window.getComputedStyle(formGroup).display);
+                console.log('  Section display:', window.getComputedStyle(section).display);
+                console.log('  ---');
+            });
+        });
+    </script>
+</body>
+</html>

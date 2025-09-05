@@ -1,0 +1,113 @@
+# TICKET ANALYTICS: Agent Shift Schedule Configuration
+# Purpose: Defines when agents work for weekend detection in ticket analytics
+# Used by: ticket_processor.py for flagging weekend vs weekday tickets
+# All times are in EDT (Eastern Daylight Time)
+# Weekend is defined as Friday after 6PM EDT until Monday at 5AM EDT
+
+agents:
+  # Nova: 11AM-7PM EDT Monday-Friday
+  Nova:
+    monday:
+      - start: "11:00"
+        end: "19:00"
+    tuesday:
+      - start: "11:00"
+        end: "19:00"
+    wednesday:
+      - start: "11:00"
+        end: "19:00"
+    thursday:
+      - start: "11:00"
+        end: "19:00"
+    friday:
+      - start: "11:00"
+        end: "18:00"  # Ends at 6PM on Friday (weekend starts)
+    saturday: []  # Weekend - no coverage
+    sunday: []    # Weekend - no coverage
+
+  # Girly: 9AM-5PM EDT Monday-Friday  
+  Girly:
+    monday:
+      - start: "09:00"
+        end: "17:00"
+    tuesday:
+      - start: "09:00"
+        end: "17:00"
+    wednesday:
+      - start: "09:00"
+        end: "17:00"
+    thursday:
+      - start: "09:00"
+        end: "17:00"
+    friday:
+      - start: "09:00"
+        end: "17:00"
+    saturday: []  # Weekend - no coverage
+    sunday: []    # Weekend - no coverage
+
+  # Bhushan: 5AM-1PM EDT Monday-Friday
+  Bhushan:
+    monday:
+      - start: "05:00"
+        end: "13:00"
+    tuesday:
+      - start: "05:00"
+        end: "13:00"
+    wednesday:
+      - start: "05:00"
+        end: "13:00"
+    thursday:
+      - start: "05:00"
+        end: "13:00"
+    friday:
+      - start: "05:00"
+        end: "13:00"
+    saturday: []  # Weekend - no coverage
+    sunday: []    # Weekend - no coverage
+
+  # Francis: 7PM-5AM EDT Monday night-Friday morning (4x10 hour shifts)
+  Francis:
+    monday:
+      - start: "19:00"  # Monday 7PM
+        end: "05:00"    # Tuesday 5AM (crosses midnight)
+    tuesday:
+      - start: "19:00"  # Tuesday 7PM
+        end: "05:00"    # Wednesday 5AM (crosses midnight)
+    wednesday:
+      - start: "19:00"  # Wednesday 7PM
+        end: "05:00"    # Thursday 5AM (crosses midnight)
+    thursday:
+      - start: "19:00"  # Thursday 7PM
+        end: "05:00"    # Friday 5AM (crosses midnight)
+    friday: []    # Friday night off (weekend starts)
+    saturday: []  # Weekend - no coverage
+    sunday: []    # Weekend - no coverage
+
+# Legacy global schedule for backward compatibility
+# Combined coverage window: 5AM-7PM EDT Monday-Friday
+# Weekend (Friday 6PM - Monday 5AM) has no coverage
+shifts:
+  monday:
+    - start: "05:00"
+      end: "19:00"
+  tuesday:
+    - start: "05:00"
+      end: "19:00"
+  wednesday:
+    - start: "05:00"
+      end: "19:00"
+  thursday:
+    - start: "05:00"
+      end: "19:00"
+  friday:
+    - start: "05:00"
+      end: "18:00"  # Weekend starts at 6PM Friday
+  saturday: []    # Weekend - no coverage
+  sunday: []      # Weekend - no coverage
+
+# Configuration notes:
+# - All times in 24-hour format (HH:MM)
+# - Overnight shifts have end < start (e.g., 19:00 to 05:00)
+# - Empty arrays [] indicate no coverage (off-shift/weekend)
+# - Weekend definition: Friday after 6PM EDT until Monday at 5AM EDT
+# - Tickets report in CDT, but schedules defined in EDT (+1 hour from CDT)

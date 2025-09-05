@@ -1,0 +1,87 @@
+# CHAT ANALYTICS: Bot and Agent Identification Configuration  
+# Purpose: Defines bot IDs, agent mappings, and classification rules for chat analytics
+# Used by: chat_processor.py for identifying bots vs humans in LiveChat data
+# Note: This is separate from schedule.yaml which handles agent work shifts
+
+# Bot and Agent Identifiers
+bots:
+  wynn_ai:
+    name: "Wynn AI"
+    id: "ce8545b838652bea3889eafd72a6d821"
+    display_name: "Wynn AI Bot"
+    color: "#00d4aa"  # Wynn AI brand color
+    type: "ai_bot"
+    
+  support_bot:
+    name: "SupportBot"
+    id: "5626186ef1d50006d82a02372509ec3e"
+    display_name: "Traject Data Live Chat"
+    color: "#ff7f0e"  # Support bot color
+    type: "support_bot"
+
+# Human Agents
+agents:
+  girly:
+    name: "Girly"  
+    email: "girly.espejo@trajectdata.com"
+    display_name: "Girly Espejo"
+    type: "human_agent"
+    
+  francis:
+    name: "Francis"
+    email: "francis.samaniego@trajectdata.com" 
+    display_name: "Francis Samaniego"
+    type: "human_agent"
+    
+  nova:
+    name: "Nova"
+    email: "nova.recla@trajectdata.com"
+    display_name: "Nova Recla"
+    type: "human_agent"
+    
+  bhushan:
+    name: "Bhushan"
+    email: "bhushan.dasari@trajectdata.com"
+    display_name: "Bhushan Dasari"
+    type: "human_agent"
+
+# Test emails to exclude from analytics (file currently doesn't exist)
+# test_emails_file: "config/chat-test-emails.txt"  # Commented out - file missing
+
+# Dashboard settings
+dashboard:
+  focus_bots_only: true  # Focus analytics on bots only
+  exclude_test_users: true  # Exclude test users from analytics
+  primary_metrics:
+    - "total_chats"
+    - "satisfaction_rate" 
+    - "response_time"
+    - "resolution_rate"
+  
+  chart_types:
+    - "daily_volume"
+    - "bot_comparison"
+    - "satisfaction_trends"
+    - "response_time_distribution"
+
+# Data processing settings
+processing:
+  date_column: "chat_creation_date"
+  agent_column: "last_operator_id"
+  rating_column: "rate"
+  duration_column: "chat_duration_in_seconds"
+  
+# Classification rules for agent identification
+classification:
+  bot_id_patterns:
+    - length: 32  # 32-character hex strings are typically Wynn AI
+      pattern: "^[0-9a-f]{32}$"
+      type: "wynn_ai"
+  
+  email_patterns:
+    - domain: "trajectdata.com"
+      type: "traject_agent"
+    - contains: "@"
+      type: "human_agent"
+      
+  default_type: "unknown"
