@@ -1399,9 +1399,10 @@ def ai_chat():
         if not message or not api_key:
             return jsonify({"status": "error", "message": "Message and API key are required"})
         
-        # Use DuckDB Query Engine for natural language queries
+        # Use Enhanced DuckDB Query Engine with Google Sheets integration
         try:
-            from query_engine import create_query_engine, format_query_response
+            from enhanced_query_engine import create_enhanced_query_engine
+            from query_engine import format_query_response  # Keep existing formatter
             from conversation_manager import get_conversation_manager
             
             # Get or create conversation ID
@@ -1411,8 +1412,9 @@ def ai_chat():
             if not conversation_id:
                 conversation_id = conv_manager.create_conversation()
             
-            # Create query engine instance (we should really cache this, but for now create fresh)
-            query_engine = create_query_engine(api_key)
+            # Create enhanced query engine instance with Google Sheets support
+            sheets_credentials = 'service_account_credentials.json' if Path('service_account_credentials.json').exists() else None
+            query_engine = create_enhanced_query_engine(api_key, sheets_credentials)
             
             # Restore conversation context from persistent storage
             stored_context = conv_manager.get_conversation_context(conversation_id, limit=5)

@@ -65,8 +65,22 @@ def main():
     
     # Import and run Flask app
     try:
+        import os
         from app import app
-        app.run(debug=True, host='0.0.0.0', port=5000)
+        
+        # Get port from environment (Cloud Run sets PORT)
+        port = int(os.environ.get('PORT', 5000))
+        
+        # Check if we're in production (Cloud Run)
+        is_production = os.environ.get('FLASK_ENV') == 'production'
+        
+        if is_production:
+            print(f"🌐 Starting production server on port {port}")
+            app.run(debug=False, host='0.0.0.0', port=port)
+        else:
+            print(f"🔧 Starting development server on port {port}")
+            app.run(debug=True, host='0.0.0.0', port=port)
+            
     except KeyboardInterrupt:
         print("\n👋 Server stopped by user")
     except Exception as e:

@@ -7,11 +7,11 @@ A revolutionary support analytics platform that combines traditional dashboards 
 **Natural Language → SQL → Insights** powered by DuckDB + Gemini AI
 
 ```
-🧠 "Which agent handles the most tickets?"
-→ "Nora N is your top performer with 1,240 tickets! Would you like to see how this breaks down by time period?"
+🧠 "For the last 35 days, what was the average response time?"
+→ "Your 35-day average is 2.1 hours, which is excellent! This includes timezone conversion from CDT to ADT. Weekend responses averaged 3.2 hours vs 1.9 hours on weekdays, which aligns with your reduced staffing schedule."
 
-🧠 "What time period?" 
-→ "Your data spans from September 2024 to September 2025. Would you like me to show monthly trends or compare seasonal patterns?"
+🧠 "Which agent handled the most tickets this quarter?"
+→ "Nova leads this quarter with 487 tickets (38% of total). Her average response time of 1.8 hours is 15% faster than the team average. Would you like to see monthly breakdowns or compare to last quarter?"
 ```
 
 ## 🏗️ Hybrid Architecture
@@ -47,11 +47,12 @@ python ticket_analytics.py --custom 15072025-22072025  # Date range
 
 ## 🎯 Revolutionary Features
 
-### 🧠 Conversational AI Query Engine (`query_engine.py`)
-- **Natural Language Processing** - Ask questions in plain English
-- **Context Memory** - Remembers previous conversation for follow-ups
-- **Smart Follow-ups** - Suggests deeper analysis and related questions
-- **Real-time SQL Generation** - Gemini converts questions to DuckDB queries
+### 🧠 Enhanced Conversational AI Query Engine (`enhanced_query_engine.py`)
+- **Natural Time Queries** - "Last 35 days", "this quarter", "past 6 months"
+- **Google Sheets Integration** - Access complete historical data, not just recent CSVs
+- **Dashboard Logic Awareness** - Understands exactly how your metrics are calculated
+- **Context Memory** - Remembers previous conversation for intelligent follow-ups
+- **Real-time SQL Generation** - Gemini converts questions to optimized DuckDB queries
 - **Privacy-First** - Only table schemas sent to AI, never actual data
 
 ### 💬 Persistent Conversation System (`conversation_manager.py`)

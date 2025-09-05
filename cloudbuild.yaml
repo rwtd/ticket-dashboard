@@ -1,0 +1,67 @@
+# Google Cloud Build configuration for automated deployment
+steps:
+  # Build the container image
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/ticket-dashboard:$COMMIT_SHA'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/ticket-dashboard:latest'
+      - '.'
+    id: 'build-image'
+
+  # Push the container image to Container Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - 'gcr.io/$PROJECT_ID/ticket-dashboard:$COMMIT_SHA'
+    id: 'push-image'
+    waitFor: ['build-image']
+
+  # Push the latest tag
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push' 
+      - 'gcr.io/$PROJECT_ID/ticket-dashboard:latest'
+    id: 'push-latest'
+    waitFor: ['build-image']
+
+  # Deploy to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'gcloud'
+    args:
+      - 'run'
+      - 'deploy'
+      - 'ticket-dashboard'
+      - '--image=gcr.io/$PROJECT_ID/ticket-dashboard:$COMMIT_SHA'
+      - '--region=us-central1'
+      - '--platform=managed'
+      - '--allow-unauthenticated'
+      - '--memory=1Gi'
+      - '--cpu=1'
+      - '--max-instances=10'
+      - '--min-instances=0'
+      - '--concurrency=80'
+      - '--timeout=300'
+      - '--set-env-vars=FLASK_ENV=production,PORT=8080'
+      - '--update-secrets=GEMINI_API_KEY=gemini-api-key:latest'
+    id: 'deploy-to-cloud-run'
+    waitFor: ['push-image']
+
+# Options for the build
+options:
+  # Enable parallel processing
+  substitution_option: 'ALLOW_LOOSE'
+  # Use high-performance machine
+  machineType: 'E2_HIGHCPU_8'
+  # Disk size
+  diskSizeGb: 20
+
+# Timeout for entire build
+timeout: '1200s'
+
+# Images to push to registry
+images:
+  - 'gcr.io/$PROJECT_ID/ticket-dashboard:$COMMIT_SHA'
+  - 'gcr.io/$PROJECT_ID/ticket-dashboard:latest'
