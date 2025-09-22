@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Minimal Chart Test</title>
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #1e1e2e;
+            color: white;
+            padding: 20px;
+        }
+        .chart-container {
+            background: #2a2d47;
+            margin: 20px 0;
+            padding: 20px;
+            border-radius: 10px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Minimal Chart Test</h1>
+
+    <div class="chart-container">
+        <h2>Test Chart with Generated Data Structure</h2>
+        <div id="testGeneratedChart" style="height: 400px;"></div>
+    </div>
+
+    <script>
+        console.log('Starting minimal chart test...');
+
+        // Test with exact data structure from generated file
+        try {
+            const weeks = ['2025-06-24', '2025-07-01', '2025-07-08', '2025-07-15', '2025-07-22', '2025-07-29', '2025-08-05', '2025-08-12', '2025-08-19', '2025-08-26', '2025-09-02', '2025-09-09', '2025-09-16'];
+            const agentColors = {'Nova': '#4ecdc4', 'Girly': '#ff6b6b', 'Francis': '#feca57', 'Bhushan': '#a29bfe'};
+
+            const responseTraces = [];
+
+            responseTraces.push({
+                x: weeks,
+                y: [3.425, 1.5666666666666667, 3.5, 2.8916666666666666, 1.7083333333333333, 1.3833333333333333, 3.4, 1.6, 0.7666666666666666, 0.25, 0.31666666666666665, 0.275, 0.23333333333333334],
+                name: 'Nova',
+                type: 'scatter',
+                mode: 'lines+markers',
+                line: { color: agentColors['Nova'], width: 3 },
+                marker: { size: 8, color: agentColors['Nova'] },
+                connectgaps: false
+            });
+
+            // Add one more trace for comparison
+            responseTraces.push({
+                x: weeks,
+                y: [1.2, 0.8333333333333334, 0.5833333333333334, 3.5, 0.8666666666666667, 0.8166666666666667, 1.15, 0.8666666666666667, 0.45, 0.76, 0.5333333333333333, 0.4333333333333333, 0.5],
+                name: 'Girly',
+                type: 'scatter',
+                mode: 'lines+markers',
+                line: { color: agentColors['Girly'], width: 3 },
+                marker: { size: 8, color: agentColors['Girly'] },
+                connectgaps: false
+            });
+
+            Plotly.newPlot('testGeneratedChart', responseTraces, {
+                title: {
+                    text: 'Test Generated Data Structure',
+                    font: { size: 20, color: '#e0e0e0' }
+                },
+                xaxis: {
+                    title: 'Week',
+                    color: '#e0e0e0',
+                    gridcolor: '#444',
+                    tickangle: -45
+                },
+                yaxis: {
+                    title: 'Response Time (Hours)',
+                    color: '#e0e0e0',
+                    gridcolor: '#444'
+                },
+                plot_bgcolor: 'rgba(0,0,0,0)',
+                paper_bgcolor: 'rgba(0,0,0,0)',
+                font: { color: '#e0e0e0' },
+                legend: {
+                    font: { color: '#e0e0e0' }
+                }
+            }, {responsive: true});
+
+            console.log('✅ Generated data structure chart created');
+        } catch (e) {
+            console.error('❌ Generated data structure chart error:', e);
+        }
+
+        console.log('Chart test complete. Check console for errors.');
+    </script>
+</body>
+</html>

@@ -221,22 +221,33 @@ class ChatDataProcessor:
         """Filter data by date range"""
         if self.df is None:
             raise ValueError("No data loaded")
-        
+
         original_count = len(self.df)
-        
+
         if start_date is None and end_date is None:
             return self.df.copy(), original_count, original_count
-        
+
         filtered_df = self.df.copy()
-        
+
+        # Make start_date and end_date timezone-aware if they aren't already
+        if start_date and start_date.tzinfo is None:
+            # Assume local timezone (ADT) for comparison
+            adt_tz = pytz.timezone('Canada/Atlantic')
+            start_date = adt_tz.localize(start_date)
+
+        if end_date and end_date.tzinfo is None:
+            # Assume local timezone (ADT) for comparison
+            adt_tz = pytz.timezone('Canada/Atlantic')
+            end_date = adt_tz.localize(end_date)
+
         if start_date:
             filtered_df = filtered_df[filtered_df['chat_creation_date_adt'] >= start_date]
-        
+
         if end_date:
             filtered_df = filtered_df[filtered_df['chat_creation_date_adt'] <= end_date]
-        
+
         filtered_count = len(filtered_df)
-        
+
         return filtered_df, original_count, filtered_count
     
     def generate_analytics(self, df: pd.DataFrame, args: Any) -> Dict[str, Any]:

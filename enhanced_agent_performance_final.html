@@ -1,0 +1,591 @@
+
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Agent Performance Comparison - Last 12 Weeks</title>
+            <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+            <style>
+                body { font-family: 'Segoe UI', sans-serif; background: linear-gradient(135deg, #1e1e2e 0%, #2a2d47 100%); color: #e0e0e0; margin: 0; padding: 20px; }
+                .container { max-width: 1400px; margin: 0 auto; }
+                .header { text-align: center; background: rgba(23, 23, 35, 0.8); padding: 30px; border-radius: 15px; margin-bottom: 30px; }
+                .header h1 { font-size: 2.5em; margin-bottom: 10px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+                .metrics-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; margin-bottom: 30px; }
+                .metric-card { background: rgba(23, 23, 35, 0.8); border-radius: 15px; padding: 25px; text-align: center; }
+                .chart-container { background: rgba(23, 23, 35, 0.8); border-radius: 15px; padding: 20px; margin-bottom: 40px; }
+                .insights { background: rgba(23, 23, 35, 0.8); border-radius: 15px; padding: 30px; }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="header">
+                    <h1>🎯 Agent Performance Comparison</h1>
+                    <div style="font-size: 1.2em; color: #a0a0a0;">Last 12 Weeks</div>
+                    <div style="color: #00d4aa; font-weight: bold;">📅 2025-06-25 to 2025-09-17</div>
+                </div>
+                
+                <div class="metrics-grid">
+                    
+            <div class="metric-card" style="border-left: 4px solid #4ecdc4;">
+                <h3 style="color: #00d4aa;">Nova</h3>
+                <div style="font-size: 2.2em; font-weight: bold; color: #4ecdc4; margin: 10px 0;">
+                    249
+                </div>
+                <div style="color: #a0a0a0; margin-bottom: 15px;">
+                    Total Tickets (35.4%)
+                </div>
+                <div style="font-size: 0.8em; color: #c0c0c0; line-height: 1.4;">
+                    <strong>Median:</strong> 1.10h (66 min)<br>
+                    <strong>Range:</strong> 0.017h - 287.03h
+                </div>
+            </div>
+            
+            <div class="metric-card" style="border-left: 4px solid #ff6b6b;">
+                <h3 style="color: #00d4aa;">Girly</h3>
+                <div style="font-size: 2.2em; font-weight: bold; color: #ff6b6b; margin: 10px 0;">
+                    120
+                </div>
+                <div style="color: #a0a0a0; margin-bottom: 15px;">
+                    Total Tickets (17.0%)
+                </div>
+                <div style="font-size: 0.8em; color: #c0c0c0; line-height: 1.4;">
+                    <strong>Median:</strong> 0.55h (33 min)<br>
+                    <strong>Range:</strong> 0.050h - 128.20h
+                </div>
+            </div>
+            
+            <div class="metric-card" style="border-left: 4px solid #feca57;">
+                <h3 style="color: #00d4aa;">Francis</h3>
+                <div style="font-size: 2.2em; font-weight: bold; color: #feca57; margin: 10px 0;">
+                    187
+                </div>
+                <div style="color: #a0a0a0; margin-bottom: 15px;">
+                    Total Tickets (26.6%)
+                </div>
+                <div style="font-size: 0.8em; color: #c0c0c0; line-height: 1.4;">
+                    <strong>Median:</strong> 0.30h (18 min)<br>
+                    <strong>Range:</strong> 0.017h - 137.23h
+                </div>
+            </div>
+            
+            <div class="metric-card" style="border-left: 4px solid #a29bfe;">
+                <h3 style="color: #00d4aa;">Bhushan</h3>
+                <div style="font-size: 2.2em; font-weight: bold; color: #a29bfe; margin: 10px 0;">
+                    148
+                </div>
+                <div style="color: #a0a0a0; margin-bottom: 15px;">
+                    Total Tickets (21.0%)
+                </div>
+                <div style="font-size: 0.8em; color: #c0c0c0; line-height: 1.4;">
+                    <strong>Median:</strong> 0.46h (28 min)<br>
+                    <strong>Range:</strong> 0.050h - 63.73h
+                </div>
+            </div>
+            
+                </div>
+
+                <div class="chart-container">
+                    <h2 style="color: #00d4aa; margin-bottom: 20px;">📊 Weekly Median Response Times</h2>
+                    <div id="weeklyResponseChart" style="height: 500px;"></div>
+                </div>
+
+                <div class="chart-container">
+                    <h2 style="color: #00d4aa; margin-bottom: 20px;">📈 Weekly Ticket Volume</h2>
+                    <div id="weeklyVolumeChart" style="height: 500px;"></div>
+                </div>
+
+                <div class="chart-container">
+                    <h2 style="color: #00d4aa; margin-bottom: 20px;">🎯 Performance vs Volume Overview</h2>
+                    <div id="comparisonChart" style="height: 400px;"></div>
+                </div>
+
+                <div class="chart-container">
+                    <h2 style="color: #00d4aa; margin-bottom: 20px;">🔀 Pipeline Distribution by Agent</h2>
+                    <div id="pipelineDistributionChart" style="height: 500px;"></div>
+                </div>
+
+                <div class="chart-container">
+                    <h2 style="color: #00d4aa; margin-bottom: 20px;">🌡️ Response Time Heatmap by Pipeline</h2>
+                    <div id="pipelinePerformanceChart" style="height: 400px;"></div>
+                </div>
+
+                <div class="insights">
+                    
+        <h2 style="color: #00d4aa; margin-bottom: 20px;">🔍 Performance Insights</h2>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px;">
+            <div style="background: rgba(102, 126, 234, 0.1); padding: 20px; border-radius: 10px; border-left: 4px solid #667eea;">
+                <h4 style="color: #667eea; margin-bottom: 10px;">🏆 Volume Leader</h4>
+                <p><strong>Nova</strong> handled 249 tickets (35.4% of total volume)</p>
+            </div>
+            <div style="background: rgba(102, 126, 234, 0.1); padding: 20px; border-radius: 10px; border-left: 4px solid #667eea;">
+                <h4 style="color: #667eea; margin-bottom: 10px;">⚡ Speed Champion</h4>
+                <p><strong>Francis</strong> achieved fastest median response time: 18 minutes</p>
+            </div>
+            <div style="background: rgba(102, 126, 234, 0.1); padding: 20px; border-radius: 10px; border-left: 4px solid #667eea;">
+                <h4 style="color: #667eea; margin-bottom: 10px;">📊 Most Consistent</h4>
+                <p><strong>Bhushan</strong> showed most consistent performance with 12.05h standard deviation</p>
+            </div>
+        </div>
+        
+                </div>
+            </div>
+
+            <script>
+                
+        // Weekly Response Time Chart Data
+        const weeks = ['2025-06-24', '2025-07-01', '2025-07-08', '2025-07-15', '2025-07-22', '2025-07-29', '2025-08-05', '2025-08-12', '2025-08-19', '2025-08-26', '2025-09-02', '2025-09-09', '2025-09-16'];
+        const agentColors = {'Nova': '#4ecdc4', 'Girly': '#ff6b6b', 'Francis': '#feca57', 'Bhushan': '#a29bfe'};
+        
+const responseTraces = [];
+
+responseTraces.push({
+    x: weeks,
+    y: [3.425, 1.5666666666666667, 3.5, 2.8916666666666666, 1.7083333333333333, 1.3833333333333333, 3.4, 1.6, 0.7666666666666666, 0.25, 0.31666666666666665, 0.275, 0.23333333333333334],
+    name: 'Nova',
+    type: 'scatter',
+    mode: 'lines+markers',
+    line: { color: agentColors['Nova'], width: 3 },
+    marker: { size: 8, color: agentColors['Nova'] },
+    connectgaps: false
+});
+
+responseTraces.push({
+    x: weeks,
+    y: [3.21996336996337, 2.9565934065934067, 2.6932234432234434, 2.4298534798534797, 2.1664835164835163, 1.903113553113553, 1.6397435897435895, 1.376373626373626, 1.1130036630036626, 0.8496336996336993, 0.586263736263736, 0.3228937728937722, 0.05952380952380887],
+    name: 'Nova Trend',
+    type: 'scatter',
+    mode: 'lines',
+    line: { color: agentColors['Nova'], width: 2, dash: 'dash' },
+    showlegend: false,
+    hoverinfo: 'skip'
+});
+
+responseTraces.push({
+    x: weeks,
+    y: [5.85, 4.033333333333333, 0.8666666666666667, 0.5333333333333333, 0.4166666666666667, 0.36666666666666664, 0.6166666666666667, 1.2, 3.4166666666666665, 10.225, 0.18333333333333332, 0.38333333333333336, 0.18333333333333332],
+    name: 'Girly',
+    type: 'scatter',
+    mode: 'lines+markers',
+    line: { color: agentColors['Girly'], width: 3 },
+    marker: { size: 8, color: agentColors['Girly'] },
+    connectgaps: false
+});
+
+responseTraces.push({
+    x: weeks,
+    y: [2.8038461538461537, 2.6990384615384615, 2.594230769230769, 2.4894230769230767, 2.3846153846153846, 2.279807692307692, 2.175, 2.0701923076923077, 1.9653846153846155, 1.8605769230769231, 1.7557692307692307, 1.6509615384615386, 1.5461538461538462],
+    name: 'Girly Trend',
+    type: 'scatter',
+    mode: 'lines',
+    line: { color: agentColors['Girly'], width: 2, dash: 'dash' },
+    showlegend: false,
+    hoverinfo: 'skip'
+});
+
+responseTraces.push({
+    x: weeks,
+    y: [6.683333333333334, 0.23333333333333334, 0.31666666666666665, 0.26666666666666666, 10.258333333333333, 4.625, 0.7, 0.24166666666666667, 4.8, 0.25, 0.5666666666666667, 0.1, 0.15],
+    name: 'Francis',
+    type: 'scatter',
+    mode: 'lines+markers',
+    line: { color: agentColors['Francis'], width: 3 },
+    marker: { size: 8, color: agentColors['Francis'] },
+    connectgaps: false
+});
+
+responseTraces.push({
+    x: weeks,
+    y: [4.032875457875459, 3.734981684981686, 3.437087912087913, 3.13919413919414, 2.8413003663003673, 2.543406593406594, 2.245512820512821, 1.9476190476190482, 1.649725274725275, 1.351831501831502, 1.0539377289377292, 0.756043956043956, 0.45815018315018285],
+    name: 'Francis Trend',
+    type: 'scatter',
+    mode: 'lines',
+    line: { color: agentColors['Francis'], width: 2, dash: 'dash' },
+    showlegend: false,
+    hoverinfo: 'skip'
+});
+
+responseTraces.push({
+    x: weeks,
+    y: [5.233333333333333, 3.4, 1.6833333333333333, 1.0666666666666667, 1.1833333333333333, 1.0666666666666667, 0.41666666666666663, 0.31666666666666665, 0.43333333333333335, 0.45000000000000007, 0.18333333333333332, 0.25, 0.35],
+    name: 'Bhushan',
+    type: 'scatter',
+    mode: 'lines+markers',
+    line: { color: agentColors['Bhushan'], width: 3 },
+    marker: { size: 8, color: agentColors['Bhushan'] },
+    connectgaps: false
+});
+
+responseTraces.push({
+    x: weeks,
+    y: [3.0514652014652013, 2.7484432234432234, 2.4454212454212456, 2.1423992673992673, 1.8393772893772895, 1.5363553113553117, 1.2333333333333336, 0.9303113553113556, 0.6272893772893777, 0.3242673992673999, 0.021245421245422058, -0.2817765567765562, -0.584798534798534],
+    name: 'Bhushan Trend',
+    type: 'scatter',
+    mode: 'lines',
+    line: { color: agentColors['Bhushan'], width: 2, dash: 'dash' },
+    showlegend: false,
+    hoverinfo: 'skip'
+});
+
+const volumeTraces = [];
+
+volumeTraces.push({
+    x: weeks,
+    y: [13, 14, 25, 26, 22, 29, 21, 16, 26, 16, 18, 36, 4],
+    name: 'Nova',
+    type: 'scatter',
+    mode: 'lines+markers',
+    line: { color: agentColors['Nova'], width: 3 },
+    marker: { size: 8, color: agentColors['Nova'] }
+});
+
+volumeTraces.push({
+    x: weeks,
+    y: [20.69230769230769, 20.65384615384615, 20.615384615384613, 20.576923076923073, 20.538461538461537, 20.499999999999996, 20.46153846153846, 20.42307692307692, 20.384615384615383, 20.346153846153843, 20.307692307692307, 20.269230769230766, 20.23076923076923],
+    name: 'Nova Trend',
+    type: 'scatter',
+    mode: 'lines',
+    line: { color: agentColors['Nova'], width: 2, dash: 'dash' },
+    showlegend: false,
+    hoverinfo: 'skip'
+});
+
+volumeTraces.push({
+    x: weeks,
+    y: [11, 9, 6, 9, 13, 10, 5, 12, 13, 12, 14, 8, 6],
+    name: 'Girly',
+    type: 'scatter',
+    mode: 'lines+markers',
+    line: { color: agentColors['Girly'], width: 3 },
+    marker: { size: 8, color: agentColors['Girly'] }
+});
+
+volumeTraces.push({
+    x: weeks,
+    y: [9.582417582417582, 9.626373626373626, 9.67032967032967, 9.714285714285714, 9.758241758241757, 9.802197802197801, 9.846153846153847, 9.89010989010989, 9.934065934065934, 9.978021978021978, 10.021978021978022, 10.065934065934066, 10.10989010989011],
+    name: 'Girly Trend',
+    type: 'scatter',
+    mode: 'lines',
+    line: { color: agentColors['Girly'], width: 2, dash: 'dash' },
+    showlegend: false,
+    hoverinfo: 'skip'
+});
+
+volumeTraces.push({
+    x: weeks,
+    y: [4, 16, 20, 12, 21, 16, 12, 25, 8, 12, 20, 23, 13],
+    name: 'Francis',
+    type: 'scatter',
+    mode: 'lines+markers',
+    line: { color: agentColors['Francis'], width: 3 },
+    marker: { size: 8, color: agentColors['Francis'] }
+});
+
+volumeTraces.push({
+    x: weeks,
+    y: [13.164835164835164, 13.56043956043956, 13.956043956043956, 14.35164835164835, 14.747252747252746, 15.142857142857142, 15.538461538461538, 15.934065934065934, 16.32967032967033, 16.725274725274723, 17.12087912087912, 17.516483516483515, 17.912087912087912],
+    name: 'Francis Trend',
+    type: 'scatter',
+    mode: 'lines',
+    line: { color: agentColors['Francis'], width: 2, dash: 'dash' },
+    showlegend: false,
+    hoverinfo: 'skip'
+});
+
+volumeTraces.push({
+    x: weeks,
+    y: [7, 7, 13, 11, 13, 14, 13, 16, 13, 6, 13, 34, 4],
+    name: 'Bhushan',
+    type: 'scatter',
+    mode: 'lines+markers',
+    line: { color: agentColors['Bhushan'], width: 3 },
+    marker: { size: 8, color: agentColors['Bhushan'] }
+});
+
+volumeTraces.push({
+    x: weeks,
+    y: [9.186813186813186, 9.758241758241757, 10.329670329670328, 10.9010989010989, 11.47252747252747, 12.043956043956044, 12.615384615384615, 13.186813186813186, 13.758241758241757, 14.329670329670328, 14.9010989010989, 15.47252747252747, 16.043956043956044],
+    name: 'Bhushan Trend',
+    type: 'scatter',
+    mode: 'lines',
+    line: { color: agentColors['Bhushan'], width: 2, dash: 'dash' },
+    showlegend: false,
+    hoverinfo: 'skip'
+});
+
+// Create Weekly Response Time Chart
+Plotly.newPlot('weeklyResponseChart', responseTraces, {
+    title: {
+        text: 'Weekly Median Response Times by Agent',
+        font: { size: 20, color: '#e0e0e0' }
+    },
+    xaxis: {
+        title: 'Week',
+        color: '#e0e0e0',
+        gridcolor: '#444',
+        tickangle: -45
+    },
+    yaxis: {
+        title: 'Median Response Time (Hours)',
+        color: '#e0e0e0',
+        gridcolor: '#444'
+    },
+    plot_bgcolor: 'rgba(0,0,0,0)',
+    paper_bgcolor: 'rgba(0,0,0,0)',
+    font: { color: '#e0e0e0' },
+    legend: {
+        font: { color: '#e0e0e0' }
+    }
+}, {responsive: true});
+
+// Create Weekly Volume Chart
+Plotly.newPlot('weeklyVolumeChart', volumeTraces, {
+    title: {
+        text: 'Weekly Ticket Volume by Agent',
+        font: { size: 20, color: '#e0e0e0' }
+    },
+    xaxis: {
+        title: 'Week',
+        color: '#e0e0e0',
+        gridcolor: '#444',
+        tickangle: -45
+    },
+    yaxis: {
+        title: 'Number of Tickets',
+        color: '#e0e0e0',
+        gridcolor: '#444'
+    },
+    plot_bgcolor: 'rgba(0,0,0,0)',
+    paper_bgcolor: 'rgba(0,0,0,0)',
+    font: { color: '#e0e0e0' },
+    legend: {
+        font: { color: '#e0e0e0' }
+    }
+}, {responsive: true});
+
+                
+        // Pipeline Distribution Chart Data
+        const pipelineAgents = ['Nova', 'Girly', 'Francis', 'Bhushan'];
+        const pipelines = ['Support Pipeline', 'Live Chat ', 'Dev Tickets', 'Enterprise and VIP Tickets', 'Marketing, Finance'];
+        const pipelineColors = {'Support Pipeline': '#4ecdc4', 'Live Chat ': '#ff6b6b', 'Dev Tickets': '#feca57', 'Enterprise and VIP Tickets': '#a29bfe', 'Marketing, Finance': '#fd79a8', 'Success': '#00b894'};
+        
+const distributionTraces = [];
+
+distributionTraces.push({
+    x: pipelineAgents,
+    y: [138, 74, 90, 100],
+    name: 'Support Pipeline',
+    type: 'bar',
+    marker: { color: '#4ecdc4' }
+});
+
+distributionTraces.push({
+    x: pipelineAgents,
+    y: [53, 21, 74, 18],
+    name: 'Live Chat ',
+    type: 'bar',
+    marker: { color: '#ff6b6b' }
+});
+
+distributionTraces.push({
+    x: pipelineAgents,
+    y: [41, 31, 30, 39],
+    name: 'Dev Tickets',
+    type: 'bar',
+    marker: { color: '#feca57' }
+});
+
+distributionTraces.push({
+    x: pipelineAgents,
+    y: [34, 2, 7, 7],
+    name: 'Enterprise and VIP Tickets',
+    type: 'bar',
+    marker: { color: '#a29bfe' }
+});
+
+distributionTraces.push({
+    x: pipelineAgents,
+    y: [0, 0, 1, 0],
+    name: 'Marketing, Finance',
+    type: 'bar',
+    marker: { color: '#fd79a8' }
+});
+
+const performanceData = [];
+const performanceAgents = [];
+const performancePipelines = [];
+const performanceValues = [];
+performanceAgents.push('Nova');
+performancePipelines.push('Support Pipeline');
+performanceValues.push(1.492);
+performanceAgents.push('Nova');
+performancePipelines.push('Dev Tickets');
+performanceValues.push(1.375);
+performanceAgents.push('Nova');
+performancePipelines.push('Enterprise and VIP Tickets');
+performanceValues.push(1.083);
+performanceAgents.push('Girly');
+performancePipelines.push('Support Pipeline');
+performanceValues.push(0.642);
+performanceAgents.push('Girly');
+performancePipelines.push('Dev Tickets');
+performanceValues.push(0.867);
+performanceAgents.push('Girly');
+performancePipelines.push('Enterprise and VIP Tickets');
+performanceValues.push(1.942);
+performanceAgents.push('Francis');
+performancePipelines.push('Support Pipeline');
+performanceValues.push(0.525);
+performanceAgents.push('Francis');
+performancePipelines.push('Dev Tickets');
+performanceValues.push(0.433);
+performanceAgents.push('Francis');
+performancePipelines.push('Enterprise and VIP Tickets');
+performanceValues.push(0.225);
+performanceAgents.push('Francis');
+performancePipelines.push('Marketing, Finance');
+performanceValues.push(0.067);
+performanceAgents.push('Bhushan');
+performancePipelines.push('Support Pipeline');
+performanceValues.push(0.825);
+performanceAgents.push('Bhushan');
+performancePipelines.push('Dev Tickets');
+performanceValues.push(0.500);
+performanceAgents.push('Bhushan');
+performancePipelines.push('Enterprise and VIP Tickets');
+performanceValues.push(0.800);
+
+// Create Pipeline Distribution Chart (Stacked Bar)
+Plotly.newPlot('pipelineDistributionChart', distributionTraces, {
+    title: {
+        text: 'Pipeline Distribution by Agent',
+        font: { size: 20, color: '#e0e0e0' }
+    },
+    xaxis: {
+        title: 'Agent',
+        color: '#e0e0e0',
+        gridcolor: '#444'
+    },
+    yaxis: {
+        title: 'Number of Tickets',
+        color: '#e0e0e0',
+        gridcolor: '#444'
+    },
+    barmode: 'stack',
+    plot_bgcolor: 'rgba(0,0,0,0)',
+    paper_bgcolor: 'rgba(0,0,0,0)',
+    font: { color: '#e0e0e0' },
+    legend: {
+        font: { color: '#e0e0e0' }
+    }
+}, {responsive: true});
+
+// Create Pipeline Performance Heatmap
+const uniqueAgents = [...new Set(performanceAgents)];
+const uniquePipelines = [...new Set(performancePipelines)];
+
+// Create matrix for heatmap
+const heatmapZ = [];
+const heatmapText = [];
+
+for (let i = 0; i < uniquePipelines.length; i++) {
+    heatmapZ[i] = [];
+    heatmapText[i] = [];
+    for (let j = 0; j < uniqueAgents.length; j++) {
+        const agent = uniqueAgents[j];
+        const pipeline = uniquePipelines[i];
+
+        // Find the performance value
+        let value = null;
+        for (let k = 0; k < performanceAgents.length; k++) {
+            if (performanceAgents[k] === agent && performancePipelines[k] === pipeline) {
+                value = performanceValues[k];
+                break;
+            }
+        }
+
+        heatmapZ[i][j] = value;
+        heatmapText[i][j] = value ? `${value.toFixed(2)}h` : 'N/A';
+    }
+}
+
+Plotly.newPlot('pipelinePerformanceChart', [{
+    z: heatmapZ,
+    x: uniqueAgents,
+    y: uniquePipelines,
+    text: heatmapText,
+    texttemplate: '%{text}',
+    textfont: { color: 'white', size: 12 },
+    type: 'heatmap',
+    colorscale: [
+        [0, '#2c3e50'],
+        [0.5, '#f39c12'],
+        [1, '#e74c3c']
+    ],
+    showscale: true,
+    colorbar: {
+        title: 'Response Time (Hours)',
+        titlefont: { color: '#e0e0e0' },
+        tickfont: { color: '#e0e0e0' }
+    }
+}], {
+    title: {
+        text: 'Response Time by Agent and Pipeline',
+        font: { size: 20, color: '#e0e0e0' }
+    },
+    xaxis: {
+        title: 'Agent',
+        color: '#e0e0e0',
+        gridcolor: '#444'
+    },
+    yaxis: {
+        title: 'Pipeline',
+        color: '#e0e0e0',
+        gridcolor: '#444'
+    },
+    plot_bgcolor: 'rgba(0,0,0,0)',
+    paper_bgcolor: 'rgba(0,0,0,0)',
+    font: { color: '#e0e0e0' }
+}, {responsive: true});
+
+                
+        const agents = ['Nova', 'Girly', 'Francis', 'Bhushan'];
+        const tickets = [249, 120, 187, 148];
+        const medianMinutes = [66.0, 33.0, 18.0, 27.500000000000004];
+        const colors = ['#4ecdc4', '#ff6b6b', '#feca57', '#a29bfe'];
+        
+        Plotly.newPlot('comparisonChart', [
+            {
+                x: agents,
+                y: medianMinutes,
+                name: 'Median Response (min)',
+                type: 'bar',
+                marker: { color: colors, opacity: 0.8 },
+                yaxis: 'y'
+            },
+            {
+                x: agents,
+                y: tickets,
+                name: 'Total Tickets',
+                type: 'scatter',
+                mode: 'lines+markers',
+                marker: { color: '#00d4aa', size: 10 },
+                line: { color: '#00d4aa', width: 3 },
+                yaxis: 'y2'
+            }
+        ], {
+            title: { text: '🎯 Performance vs Volume Comparison', font: { size: 18, color: '#e0e0e0' } },
+            plot_bgcolor: 'rgba(30, 30, 46, 0.8)',
+            paper_bgcolor: 'rgba(23, 23, 35, 0.9)',
+            font: { color: '#e0e0e0' },
+            showlegend: true,
+            legend: { bgcolor: 'rgba(23, 23, 35, 0.8)' },
+            yaxis: { title: 'Median Response Time (minutes)', side: 'left' },
+            yaxis2: { title: 'Total Tickets', side: 'right', overlaying: 'y' },
+            height: 500
+        });
+        
+            </script>
+        </body>
+        </html>
+        

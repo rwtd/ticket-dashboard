@@ -798,6 +798,33 @@
                             <small>Short-term analysis</small>
                         </label>
                     </div>
+
+                    <div class="date-option" onclick="selectPerformancePeriod(this, 'custom')">
+                        <label>
+                            <input type="radio" name="performancePeriod" value="custom">
+                            <strong>Custom Date Range</strong><br>
+                            <small>Specify start and end dates</small>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Custom Date Range Inputs for Agent Performance -->
+                <div id="agent-performance-custom-dates" style="display: none; margin-top: 20px; padding: 20px; background: rgba(42, 45, 71, 0.3); border-radius: 8px;">
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                        <div class="form-group">
+                            <label for="agentPerformanceStartDate">Start Date</label>
+                            <input type="date" id="agentPerformanceStartDate" class="form-control"
+                                   style="width: 100%; padding: 10px;">
+                        </div>
+                        <div class="form-group">
+                            <label for="agentPerformanceEndDate">End Date</label>
+                            <input type="date" id="agentPerformanceEndDate" class="form-control"
+                                   style="width: 100%; padding: 10px;">
+                        </div>
+                    </div>
+                    <div style="margin-top: 10px; color: #ccc; font-size: 12px;">
+                        💡 Leave blank for open-ended ranges (e.g., only start date = "from date onwards")
+                    </div>
                 </div>
             </div>
 
@@ -1201,9 +1228,17 @@
                 opt.classList.remove('active');
             });
             element.classList.add('active');
-            
+
             // Update radio button
             element.querySelector('input[type="radio"]').checked = true;
+
+            // Show/hide custom date inputs
+            const customDatesDiv = document.getElementById('agent-performance-custom-dates');
+            if (period === 'custom') {
+                customDatesDiv.style.display = 'block';
+            } else {
+                customDatesDiv.style.display = 'none';
+            }
         }
 
         function selectIndividualPeriod(element, period) {
@@ -1317,7 +1352,25 @@
             if (analyticsType === 'agent_performance') {
                 // Use performance period instead of date parameters
                 const performancePeriod = document.querySelector('input[name="performancePeriod"]:checked').value;
-                dateParams = { performancePeriod };
+
+                if (performancePeriod === 'custom') {
+                    // Get custom date range
+                    const startDate = document.getElementById('agentPerformanceStartDate').value;
+                    const endDate = document.getElementById('agentPerformanceEndDate').value;
+
+                    if (!startDate && !endDate) {
+                        showAlert('Please specify at least a start date or end date for custom range', 'error');
+                        return;
+                    }
+
+                    dateParams = {
+                        performancePeriod: 'custom',
+                        customStartDate: startDate,
+                        customEndDate: endDate
+                    };
+                } else {
+                    dateParams = { performancePeriod };
+                }
             } else if (analyticsType === 'individual_agent') {
                 // Use individual period and selected agent
                 const individualPeriod = document.querySelector('input[name="individualPeriod"]:checked').value;

@@ -148,7 +148,9 @@ def analyze():
         
         # Handle agent performance comparison separately
         if analytics_type == 'agent_performance':
-            return handle_agent_performance_analysis(data_source, selected_files, performance_period)
+            custom_start_date = data.get('customStartDate')
+            custom_end_date = data.get('customEndDate')
+            return handle_agent_performance_analysis(data_source, selected_files, performance_period, custom_start_date, custom_end_date)
         
         # Handle individual agent analysis separately
         if analytics_type == 'individual_agent':
@@ -253,7 +255,24 @@ def analyze():
             analysis_df, original_count, filtered_count = processor.filter_date_range(start_dt, end_dt)
             
             if len(analysis_df) == 0:
-                return jsonify({'error': 'No data found for the specified date range'}), 400
+                # Get data range for helpful error message
+                data_range_msg = "No data range available"
+                if hasattr(processor, 'df') and processor.df is not None and len(processor.df) > 0:
+                    try:
+                        if analytics_type == 'tickets':
+                            min_date = processor.df['Create date'].min()
+                            max_date = processor.df['Create date'].max()
+                        else:  # chats
+                            min_date = processor.df['chat_creation_date_adt'].min()
+                            max_date = processor.df['chat_creation_date_adt'].max()
+                        data_range_msg = f"Available data: {min_date.strftime('%Y-%m-%d')} to {max_date.strftime('%Y-%m-%d')}"
+                    except:
+                        data_range_msg = "Data range unavailable"
+
+                return jsonify({
+                    'error': f'No {analytics_type} found for the specified date range. {data_range_msg}',
+                    'suggestion': 'Try selecting a date within your data range, or use "All Time" to see all available data.'
+                }), 400
             
             # Create a mock args object for analytics generation
             class MockArgs:
@@ -290,7 +309,24 @@ def analyze():
             analysis_df, original_count, filtered_count = processor.filter_date_range(start_dt, end_dt)
             
             if len(analysis_df) == 0:
-                return jsonify({'error': 'No data found for the specified date range'}), 400
+                # Get data range for helpful error message
+                data_range_msg = "No data range available"
+                if hasattr(processor, 'df') and processor.df is not None and len(processor.df) > 0:
+                    try:
+                        if analytics_type == 'tickets':
+                            min_date = processor.df['Create date'].min()
+                            max_date = processor.df['Create date'].max()
+                        else:  # chats
+                            min_date = processor.df['chat_creation_date_adt'].min()
+                            max_date = processor.df['chat_creation_date_adt'].max()
+                        data_range_msg = f"Available data: {min_date.strftime('%Y-%m-%d')} to {max_date.strftime('%Y-%m-%d')}"
+                    except:
+                        data_range_msg = "Data range unavailable"
+
+                return jsonify({
+                    'error': f'No {analytics_type} found for the specified date range. {data_range_msg}',
+                    'suggestion': 'Try selecting a date within your data range, or use "All Time" to see all available data.'
+                }), 400
             
             # Create a mock args object for analytics generation
             class MockArgs:
@@ -709,7 +745,7 @@ def delete_upload(filename):
     
     return redirect(url_for('index'))
 
-def handle_agent_performance_analysis(data_source, selected_files, performance_period):
+def handle_agent_performance_analysis(data_source, selected_files, performance_period, custom_start_date=None, custom_end_date=None):
     """Handle agent performance comparison analysis"""
     try:
         # Determine which files to use
@@ -735,7 +771,7 @@ def handle_agent_performance_analysis(data_source, selected_files, performance_p
         analyzer.process_data()
         
         # Perform analysis
-        analysis = analyzer.analyze_performance(performance_period)
+        analysis = analyzer.analyze_performance(performance_period, custom_start_date, custom_end_date)
         
         if 'error' in analysis:
             return jsonify({'error': analysis['error']}), 400
