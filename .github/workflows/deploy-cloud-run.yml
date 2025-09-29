@@ -86,7 +86,7 @@ jobs:
           fi
           IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${AR_REPO}/${SERVICE_NAME}:${IMAGE_TAG}"
           echo "IMAGE=${IMAGE}"
-          echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
+          echo "image=${IMAGE}" >> "${GITHUB_OUTPUT}"
           gcloud builds submit --tag "${IMAGE}" .
 
       - name: Deploy to Cloud Run
@@ -102,7 +102,10 @@ jobs:
 
           # Determine allow unauthenticated flag (default true)
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            ALLOW="${{ github.event.inputs.allow_unauthenticated || true }}"
+            ALLOW="${{ github.event.inputs.allow_unauthenticated }}"
+            if [ -z "$ALLOW" ]; then
+              ALLOW="true"
+            fi
           else
             ALLOW="true"
           fi
@@ -137,4 +140,4 @@ jobs:
           set -euo pipefail
           URL="$(gcloud run services describe "${SERVICE_NAME}" --region="${REGION}" --format='value(status.url)')"
           echo "Service URL: ${URL}"
-          echo "service_url=${URL}" >> "$GITHUB_OUTPUT"
+          echo "service_url=${URL}" >> "${GITHUB_OUTPUT}"
