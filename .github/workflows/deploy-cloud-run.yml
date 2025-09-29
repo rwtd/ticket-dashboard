@@ -95,8 +95,10 @@ jobs:
         run: |
           set -euo pipefail
           IMAGE="${{ steps.build.outputs.image }}"
-          WX="${{ vars.WIDGETS_XFO || 'SAMEORIGIN' }}"
-          WFA="${{ vars.WIDGETS_FRAME_ANCESTORS || "'self' https://*.hubspot.com" }}"
+          WX="${{ vars.WIDGETS_XFO }}"
+          WFA="${{ vars.WIDGETS_FRAME_ANCESTORS }}"
+          WX="${WX:-SAMEORIGIN}"
+          WFA="${WFA:-'self' https://*.hubspot.com}"
 
           # Determine allow unauthenticated flag (default true)
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
