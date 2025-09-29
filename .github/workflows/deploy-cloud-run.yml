@@ -61,32 +61,32 @@ jobs:
 
           # Validate required configuration is available
           if [ -z "${PROJECT_ID:-}" ]; then
-            echo "❌ PROJECT_ID is not configured"
+            echo "❌ PROJECT_ID is not configured (check secrets.PROJECT_ID)"
             exit 1
           fi
 
           if [ -z "${REGION:-}" ]; then
-            echo "❌ REGION is not configured"
+            echo "❌ REGION is not configured (check secrets.REGION)"
             exit 1
           fi
 
           if [ -z "${SERVICE_NAME:-}" ]; then
-            echo "❌ SERVICE_NAME is not configured"
+            echo "❌ SERVICE_NAME is not configured (check secrets.SERVICE_NAME)"
             exit 1
           fi
 
           if [ -z "${AR_REPO:-}" ]; then
-            echo "❌ AR_REPO is not configured"
+            echo "❌ AR_REPO is not configured (check secrets.AR_REPO)"
             exit 1
           fi
 
           if [ -z "${WIF_PROVIDER:-}" ]; then
-            echo "❌ WIF_PROVIDER is not configured"
+            echo "❌ WIF_PROVIDER is not configured (check secrets.WIF_PROVIDER)"
             exit 1
           fi
 
           if [ -z "${WIF_SERVICE_ACCOUNT:-}" ]; then
-            echo "❌ WIF_SERVICE_ACCOUNT is not configured"
+            echo "❌ WIF_SERVICE_ACCOUNT is not configured (check secrets.WIF_SERVICE_ACCOUNT)"
             exit 1
           fi
 
@@ -103,8 +103,7 @@ jobs:
           set -euo pipefail
 
           echo "=== Checking Artifact Registry ==="
-
-
+          
           if ! gcloud artifacts repositories describe "${AR_REPO}" \
             --location="${REGION}" \
             --project="${PROJECT_ID}" >/dev/null 2>&1; then
@@ -126,8 +125,7 @@ jobs:
           set -euo pipefail
 
           echo "=== Building Container Image ==="
-
-
+          
           # Determine image tag
           IMAGE_TAG="${{ github.event.inputs.image_tag }}"
           if [ -z "${IMAGE_TAG}" ]; then
@@ -149,8 +147,7 @@ jobs:
           set -euo pipefail
 
           echo "=== Deploying to Cloud Run ==="
-
-
+          
           IMAGE="${{ steps.build.outputs.image }}"
 
           # Set default values for environment variables
@@ -169,7 +166,7 @@ jobs:
           # Determine allow unauthenticated flag (default true)
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             ALLOW="${{ github.event.inputs.allow_unauthenticated }}"
-            if [ -z "$ALLOW" ]; then
+            if [ -z "$ALLOW" ] || [ "$ALLOW" = "null" ]; then
               ALLOW="true"
             fi
           else
@@ -189,17 +186,18 @@ jobs:
           echo "   WIDGETS_FRAME_ANCESTORS=${WFA}"
 
           gcloud run deploy "${SERVICE_NAME}" \
-            --region "${REGION}" \
-            --image "${IMAGE}" \
-            --platform managed \
+            --region="${REGION}" \
+            --image="${IMAGE}" \
+            --platform=managed \
             ${AUTH_FLAG} \
             --min-instances=0 \
             --max-instances=3 \
             --concurrency=80 \
             --cpu=1 \
             --memory=512Mi \
-            --set-env-vars "WIDGETS_XFO=${WX},WIDGETS_FRAME_ANCESTORS=${WFA}" \
-            --project="${PROJECT_ID}"
+            --set-env-vars="WIDGETS_XFO=${WX},WIDGETS_FRAME_ANCESTORS=${WFA}" \
+            --project="${PROJECT_ID}" \
+            --timeout=300
 
       - name: Get service URL
         id: get-url
@@ -208,8 +206,7 @@ jobs:
           set -euo pipefail
 
           echo "=== Getting Service URL ==="
-
-
+          
           URL="$(gcloud run services describe "${SERVICE_NAME}" \
             --region="${REGION}" \
             --project="${PROJECT_ID}" \
