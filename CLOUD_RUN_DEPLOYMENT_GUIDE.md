@@ -1,4 +1,116 @@
 # 🚀 Google Cloud Run Deployment Guide
+> Quick Deploy: This repository now includes a one-click-ish Cloud Run deployment via GitHub Actions and local convenience scripts/Makefile. Use the sections below for CI and local deployments.
+
+## ⚡ Quick Deploy (GitHub Actions)
+
+This repo ships with an automated Cloud Run deployment workflow you can trigger on-demand or on push to main.
+
+Prerequisites
+- Enable APIs on your GCP project (Cloud Run, Cloud Build, Artifact Registry):
+  ```bash
+  gcloud services enable run.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com
+  ```
+- Configure Workload Identity Federation (recommended) or a Service Account with deploy permissions.
+  - Required permissions (roles can be on the deploy SA or via WIF):
+    - roles/run.admin
+    - roles/iam.serviceAccountUser
+    - roles/artifactregistry.admin (or reader/writer if repo pre-exists)
+    - roles/cloudbuild.builds.editor
+
+GitHub repository configuration
+- Repository Variables (Settings → Variables → Repository variables):
+  - PROJECT_ID: your-gcp-project-id
+  - REGION: e.g., us-central1
+  - SERVICE_NAME: e.g., ticket-dashboard
+  - AR_REPO: e.g., apps
+  - Optional:
+    - WIDGETS_XFO: default SAMEORIGIN
+    - WIDGETS_FRAME_ANCESTORS: default "'self' https://*.hubspot.com"
+- Repository Secrets (Settings → Secrets and variables → Actions → Secrets):
+  - WIF_PROVIDER: resource name like projects/123456789/locations/global/workloadIdentityPools/POOL/providers/PROVIDER
+  - WIF_SERVICE_ACCOUNT: deploy service account email, e.g., cloud-run-depltickewoyer@PROJECT_ID.iam.gserviceaccount.com
+
+How to trigger
+- On-demand: GitHub → Actions → “Deploy to Cloud Run” → Run workflow
+  - Optional inputs:
+    - image_tag: defaults to the commit SHA
+    - allow_unauthenticated: boolean (default true)
+- Automatic: Push to main triggers build and deploy.
+
+What it does
+- Uses Cloud Build to build a container image
+- Pushes the image to Artifact Registry
+- Deploys to Cloud Run with:
+  - --min-instances=0 --max-instances=3 --concurrency=80 --cpu=1 --memory=512Mi
+  - --allow-unauthenticated if enabled
+  - Environment variables:
+    - WIDGETS_XFO (default SAMEORIGIN)
+    - WIDGETS_FRAME_ANCESTORS (default "'self' https://*.hubspot.com")
+- Prints the service URL on completion
+
+Workflow file
+- Location: .github/workflows/deploy-cloud-run.yml
+
+---
+
+## 🧰 Local Deploy (one command)
+
+Makefile (recommended)
+- Example:
+  ```bash
+  make PROJECT_ID=your-proj REGION=us-central1 SERVICE_NAME=ticket-dashboard AR_REPO=apps all
+  ```
+- Targets:
+  - info, ar-create, build, deploy, url
+- Environment variables:
+  - WIDGETS_XFO (default SAMEORIGIN)
+  - WIDGETS_FRAME_ANCESTORS (default "'self' https://*.hubspot.com")
+
+Script (alternative)
+- Example (env vars):
+  ```bash
+  PROJECT_ID=your-proj REGION=us-central1 SERVICE_NAME=ticket-dashboard AR_REPO=apps \
+  bash scripts/deploy_cloud_run.sh
+  ```
+- Example (flags):
+  ```bash
+  bash scripts/deploy_cloud_run.sh \
+    --project-id your-proj \
+    --region us-central1 \
+    --service ticket-dashboard \
+    --ar-repo apps \
+    --image-tag test1 \
+    --allow-unauth
+  # Or disable unauth:
+  # --no-allow-unauth
+  ```
+- The script ensures the Artifact Registry repo exists, builds via Cloud Build, deploys to Cloud Run, and prints the service URL.
+
+---
+
+## ✅ Post-Deploy Smoke Test
+
+1) Get the service URL:
+```bash
+gcloud run services describe "$SERVICE_NAME" --region="$REGION" --format='value(status.url)'
+```
+2) Open:
+- $SERVICE_URL/widgets
+3) Verify a few widget endpoints (examples):
+- $SERVICE_URL/widget/your-widget-slug
+- $SERVICE_URL/widget/your-widget-slug.json
+
+---
+
+## 🔒 Security headers for embedding
+
+This app supports embedding controls via environment variables. Configure at deploy time:
+- WIDGETS_XFO (default SAMEORIGIN): sets X-Frame-Options equivalent policy
+- WIDGETS_FRAME_ANCESTORS (default "'self' https://*.hubspot.com"): sets frame-ancestors source list
+
+You can override these in:
+- GitHub Actions (repository variables)
+- Local Makefile/CLI (pass env vars or flags)
 
 Complete step-by-step guide to deploy the Ticket Dashboard with AI Assistant to Google Cloud Run.
 

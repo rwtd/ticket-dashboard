@@ -1,0 +1,41 @@
+# Cloud Run Service manifest (declarative)
+# Usage:
+#   export REGION=us-central1
+#   export SERVICE_NAME=ticket-dashboard
+#   export IMAGE="us-central1-docker.pkg.dev/PROJECT_ID/apps/ticket-dashboard:TAG"
+#   export WIDGETS_XFO="SAMEORIGIN"
+#   export WIDGETS_FRAME_ANCESTORS="'self' https://*.hubspot.com"
+#
+# Apply (replace existing service configuration):
+#   gcloud run services replace cloudrun/service.yaml --region "${REGION}"
+#
+# Or deploy imperatively (overrides manifest values with flags):
+#   gcloud run deploy "${SERVICE_NAME}" \
+#     --region "${REGION}" \
+#     --image "${IMAGE}" \
+#     --platform managed \
+#     --allow-unauthenticated \
+#     --min-instances=0 --max-instances=3 --concurrency=80 --cpu=1 --memory=512Mi \
+#     --set-env-vars "WIDGETS_XFO=${WIDGETS_XFO},WIDGETS_FRAME_ANCESTORS=${WIDGETS_FRAME_ANCESTORS}"
+
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: ${SERVICE_NAME}
+  annotations:
+    autoscaling.knative.dev/maxScale: "3"
+spec:
+  template:
+    spec:
+      containerConcurrency: 80
+      containers:
+        - image: ${IMAGE}
+          env:
+            - name: WIDGETS_XFO
+              value: ${WIDGETS_XFO}
+            - name: WIDGETS_FRAME_ANCESTORS
+              value: ${WIDGETS_FRAME_ANCESTORS}
+          resources:
+            limits:
+              cpu: "1"
+              memory: "512Mi"

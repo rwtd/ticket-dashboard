@@ -308,12 +308,10 @@ class TicketDataProcessor:
         # 2. Weekend vs Weekday Distribution - Convert to Plotly
         analytics['charts'].append(self._create_weekend_distribution_chart(analysis_df))
         
-        # 3. Daily Ticket Volume - Create Plotly chart with proper fallback
-        analysis_df["Day"] = analysis_df["Create date"].dt.date
-        day_counts = analysis_df["Day"].value_counts().sort_index()
-        if len(day_counts) > 0:
-            analytics['charts'].append(self._create_daily_volume_chart(day_counts))
-            
+        # 3. Daily Ticket Volume - Removed per requirements
+        #    The "Daily Ticket Volume" chart has been intentionally excluded from the dashboard.
+        #    We keep "Historic Daily Ticket Volume" below.
+        
         # 4. Historic Daily Volume (back to start of 2025) - Use full dataset
         if self.df is not None and len(self.df) > 0:
             full_df = self.df.copy()
@@ -1100,26 +1098,78 @@ class TicketDataProcessor:
             return ""
 
     def _create_weekly_response_time_chart(self, analysis_df: pd.DataFrame) -> str:
-        """Create separate weekly average and median response time charts for better clarity"""
+        """Create a single weekly response chart with Mean/Median toggle (Median default)."""
         try:
             # Always use Plotly for consistency with chat analytics
             import plotly.graph_objects as go
-            # Create two separate charts - one for averages, one for medians
-            avg_chart = self._create_interactive_weekly_chart(analysis_df, stat_type='mean')
-            median_chart = self._create_interactive_weekly_chart(analysis_df, stat_type='median') 
-            
+
+            # Build both chart variants but show only one via UI (Median by default).
+            # Note: weekend series/bars are hidden by default; toggles remain visible.
+            median_chart = self._create_interactive_weekly_chart(
+                analysis_df,
+                stat_type='median',
+                visible=True,
+                container_id='weekly-stat-median'
+            )
+            mean_chart = self._create_interactive_weekly_chart(
+                analysis_df,
+                stat_type='mean',
+                visible=False,
+                container_id='weekly-stat-mean'
+            )
+
+            # Simple radio controls to switch between Median and Mean without re-rendering.
+            # We only toggle container visibility here. Median is the default selection.
             return f"""
             <div class="section">
-                <h3>📈 Weekly Response Time Trends</h3>
-                <p style="color: #b0b0b0; font-size: 0.9em; margin-bottom: 20px;">
-                    Separated into two charts for clarity: averages show overall performance trends, 
-                    medians show typical response times (less affected by outliers).
-                </p>
-                {avg_chart}
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
+                    <h3 style="margin:0;">📈 Weekly Response Time Trends</h3>
+                    <div style="display:flex;align-items:center;gap:14px;">
+                        <!-- UI toggle for statistic type (Median default) -->
+                        <!-- Default must be Median per requirements -->
+                        <label style="display:flex;align-items:center;gap:6px;color:#e0e0e0;">
+                            <input type="radio" name="stat-type-toggle" value="median" checked
+                                   onclick="toggleWeeklyStatType('median')" />
+                            Median
+                        </label>
+                        <label style="display:flex;align-items:center;gap:6px;color:#e0e0e0;">
+                            <input type="radio" name="stat-type-toggle" value="mean"
+                                   onclick="toggleWeeklyStatType('mean')" />
+                            Mean
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Chart containers: rendered once, toggled via radios -->
                 {median_chart}
+                {mean_chart}
             </div>
+
+            <script>
+            // Toggle between median and mean variants by showing/hiding containers
+            function toggleWeeklyStatType(stat) {{
+                const medianEl = document.getElementById('weekly-stat-median');
+                const meanEl = document.getElementById('weekly-stat-mean');
+                if (!medianEl || !meanEl) return;
+
+                if (stat === 'median') {{
+                    medianEl.style.display = 'block';
+                    meanEl.style.display = 'none';
+                    // Apply current visibility settings for median variant
+                    if (typeof updateChartDisplay_median === 'function') {{
+                        updateChartDisplay_median();
+                    }}
+                }} else {{
+                    medianEl.style.display = 'none';
+                    meanEl.style.display = 'block';
+                    // Apply current visibility settings for mean variant
+                    if (typeof updateChartDisplay_mean === 'function') {{
+                        updateChartDisplay_mean();
+                    }}
+                }}
+            }}
+            </script>
             """
-            
         except ImportError:
             print("Plotly not available, falling back to static chart with simplified controls")
             return self._create_matplotlib_weekly_chart_fallback(analysis_df)
@@ -1411,8 +1461,14 @@ class TicketDataProcessor:
             print(f"Error creating weekly response time chart: {e}")
             return ""
     
-    def _create_interactive_weekly_chart(self, analysis_df: pd.DataFrame, stat_type: str = 'median') -> str:
-        """Create interactive Plotly weekly chart with specified statistic type"""
+    def _create_interactive_weekly_chart(self, analysis_df: pd.DataFrame, stat_type: str = 'median', visible: bool = True, container_id: str = None) -> str:
+        """Create interactive Plotly weekly chart with specified statistic type.
+
+        Parameters:
+        - stat_type: 'median' or 'mean'
+        - visible: whether the outer container is initially shown
+        - container_id: optional id for the outer container (for UI toggling)
+        """
         try:
             import plotly.graph_objects as go
             from datetime import datetime, timedelta
@@ -1515,7 +1571,8 @@ class TicketDataProcessor:
                     y=weekly_stats['Weekend_Only'],
                     name=f'Weekend {stat_label}',
                     marker_color='rgba(255, 234, 167, 0.8)',
-                    visible=True,
+                    # Default hidden per requirements; user can enable via toggle
+                    visible=False,
                     customdata=['weekend'] * len(weekly_stats),
                     legendgroup='weekend',
                     uid='bar-weekend'
@@ -1574,13 +1631,15 @@ class TicketDataProcessor:
                     mode='lines',
                     name='Trend Line (Weekend)',
                     line=dict(color='rgba(255, 234, 167, 1)', width=2, dash='dashdot'),
-                    visible=True,
+                    # Default hidden per requirements; user can enable via toggle
+                    visible=False,
                     customdata=['trend-weekend'] * len(weekly_stats),
                     legendgroup='trend-weekend',
                     uid='line-trend-weekend'
                 ))
             
-            chart_title = f'📈 Weekly Response Time Trends - {stat_label} Values'
+            # Unified title per requirements (no '- Mean/Median Values' suffix)
+            chart_title = '📈 Weekly Response Time Trends'
             y_axis_title = f'{stat_label} Response Time (Hours)'
             
             # Update layout with better contrast
@@ -1616,14 +1675,30 @@ class TicketDataProcessor:
             # 12 weeks chart
             if len(weekly_stats) > 12:
                 fig_12 = go.Figure(fig)
-                fig_12.data = [trace.update(x=weekly_stats['Week_Label'][-12:]) for trace in fig_12.data]
+                # Slice x/y to last 12 points; preserve per-trace visibility
+                for tr in fig_12.data:
+                    try:
+                        if hasattr(tr, "x"):
+                            tr.x = list(weekly_stats['Week_Label'][-12:])
+                        if hasattr(tr, "y") and tr.y is not None and len(tr.y) == len(weekly_stats):
+                            tr.y = tr.y[-12:]
+                    except Exception:
+                        pass
                 chart_12_html = fig_12.to_html(include_plotlyjs="cdn", div_id=f"plotly-div-{stat_type}-12")
                 charts_html.append(('12', chart_12_html))
             
             # 8 weeks chart
             if len(weekly_stats) > 8:
                 fig_8 = go.Figure(fig)
-                fig_8.data = [trace.update(x=weekly_stats['Week_Label'][-8:]) for trace in fig_8.data]
+                # Slice x/y to last 8 points; preserve per-trace visibility
+                for tr in fig_8.data:
+                    try:
+                        if hasattr(tr, "x"):
+                            tr.x = list(weekly_stats['Week_Label'][-8:])
+                        if hasattr(tr, "y") and tr.y is not None and len(tr.y) == len(weekly_stats):
+                            tr.y = tr.y[-8:]
+                    except Exception:
+                        pass
                 chart_8_html = fig_8.to_html(include_plotlyjs="cdn", div_id=f"plotly-div-{stat_type}-8")
                 charts_html.append(('8', chart_8_html))
             
@@ -1631,10 +1706,10 @@ class TicketDataProcessor:
             weekend_available = 'Weekend_Only' in weekly_stats.columns
             weekend_controls = f'''
                 <label class="bar-control">
-                    <input type="checkbox" class="bar-toggle-{stat_type}" data-bar-type="weekend" checked> Weekend {stat_label}
+                    <input type="checkbox" class="bar-toggle-{stat_type}" data-bar-type="weekend"> Weekend {stat_label}
                 </label>
                 <label class="bar-control">
-                    <input type="checkbox" class="bar-toggle-{stat_type}" data-bar-type="trend-weekend" checked> Weekend Trend Line
+                    <input type="checkbox" class="bar-toggle-{stat_type}" data-bar-type="trend-weekend"> Weekend Trend Line
                 </label>
             ''' if weekend_available else ''
             
@@ -1670,13 +1745,28 @@ class TicketDataProcessor:
                 // Apply current bar visibility settings
                 applyBarVisibility_{stat_type}();
             }}
+
+            // Explicit defaults: weekend series off by default; others on
+            const WEEKLY_DEFAULTS_{stat_type} = {{ all: true, weekday: true, 'trend-all': true, 'trend-weekday': true, weekend: false, 'trend-weekend': false }};
+
+            function initControls_{stat_type}() {{
+                // Force initial checkbox states to defaults (prevents any accidental auto-checking)
+                const defaults = WEEKLY_DEFAULTS_{stat_type};
+                document.querySelectorAll('.bar-toggle-{stat_type}').forEach(cb => {{
+                    const t = cb.dataset.barType;
+                    if (Object.prototype.hasOwnProperty.call(defaults, t)) {{
+                        cb.checked = defaults[t];
+                    }}
+                }});
+            }}
             
             function applyBarVisibility_{stat_type}() {{
-                const checkboxes = document.querySelectorAll('.bar-toggle-{stat_type}');
-                const visibilityMap = {{}};
-                
+                const defaults = WEEKLY_DEFAULTS_{stat_type};
+                // Start from defaults, then override with live checkbox states
+                const visibilityMap = Object.assign({{}}, defaults);
+
                 // Build visibility map from checkboxes
-                checkboxes.forEach(checkbox => {{
+                document.querySelectorAll('.bar-toggle-{stat_type}').forEach(checkbox => {{
                     const barType = checkbox.dataset.barType;
                     visibilityMap[barType] = checkbox.checked;
                 }});
@@ -1686,15 +1776,13 @@ class TicketDataProcessor:
                     if (container.style.display !== 'none') {{
                         const plotlyDiv = container.querySelector('[id^="plotly-div-{stat_type}-"]');
                         if (plotlyDiv && window.Plotly && plotlyDiv._fullData) {{
-                            const updates = {{
-                                visible: []
-                            }};
+                            const updates = {{ visible: [] }};
                             
                             // Get the current trace data from Plotly's internal data
-                            plotlyDiv._fullData.forEach((trace, idx) => {{
+                            plotlyDiv._fullData.forEach((trace) => {{
                                 if (trace.customdata && trace.customdata.length > 0) {{
                                     const traceType = trace.customdata[0];
-                                    const shouldBeVisible = visibilityMap[traceType] !== false;
+                                    const shouldBeVisible = Object.prototype.hasOwnProperty.call(visibilityMap, traceType) ? visibilityMap[traceType] : true;
                                     updates.visible.push(shouldBeVisible);
                                 }} else {{
                                     updates.visible.push(true); // Default to visible for traces without customdata
@@ -1715,57 +1803,62 @@ class TicketDataProcessor:
             
             // Add event listeners for bar toggles for this stat type
             document.addEventListener('DOMContentLoaded', function() {{
+                // Ensure default-off logic for weekend before first render pass
+                initControls_{stat_type}();
+
                 document.querySelectorAll('.bar-toggle-{stat_type}').forEach(checkbox => {{
                     checkbox.addEventListener('change', updateChartDisplay_{stat_type});
                 }});
                 
-                // Initialize chart visibility
-                setTimeout(updateChartDisplay_{stat_type}, 500);
+                // Apply once after initializing defaults
+                setTimeout(updateChartDisplay_{stat_type}, 300);
             }});
             </script>
             """
             
             # Generate unique IDs for this chart instance
             chart_id = f"weekly-{stat_type}"
-            
+
             return f"""
-            <div class="subsection" style="margin-bottom: 30px;">
-                <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 15px; flex-wrap: wrap;">
-                    <div>
-                        <h4 style="color: #00d4aa; margin: 0;">{chart_title}</h4>
-                        <div class="week-toggle-controls" style="margin-top: 8px;">
-                            <label style="color: #e0e0e0; margin-right: 15px; font-size: 0.9em;">Time Range:</label>
-                            <button class="week-toggle-btn-{stat_type} active" data-weeks="all" onclick="showWeeklyChart_{stat_type}('all')">All Weeks</button>
-                            {f'<button class="week-toggle-btn-{stat_type}" data-weeks="12" onclick="showWeeklyChart_{stat_type}(\'12\')">Last 12 Weeks</button>' if len(weekly_stats) > 12 else ''}
-                            {f'<button class="week-toggle-btn-{stat_type}" data-weeks="8" onclick="showWeeklyChart_{stat_type}(\'8\')">Last 8 Weeks</button>' if len(weekly_stats) > 8 else ''}
-                        </div>
-                    </div>
-                    
-                    <div class="bar-type-controls">
-                        <div style="color: #e0e0e0; margin-bottom: 8px; font-size: 0.9em; font-weight: bold;">📊 Show/Hide Bar Types:</div>
-                        <div class="bar-controls-grid">
-                            <label class="bar-control">
-                                <input type="checkbox" class="bar-toggle-{stat_type}" data-bar-type="all" checked> All Tickets
-                            </label>
-                            <label class="bar-control">
-                                <input type="checkbox" class="bar-toggle-{stat_type}" data-bar-type="weekday" checked> Weekday {stat_label}
-                            </label>
-                            {weekend_controls}
-                            <label class="bar-control">
-                                <input type="checkbox" class="bar-toggle-{stat_type}" data-bar-type="trend-all" checked> Overall Trend Line
-                            </label>
-                            <label class="bar-control">
-                                <input type="checkbox" class="bar-toggle-{stat_type}" data-bar-type="trend-weekday" checked> Weekday Trend Line
-                            </label>
-                        </div>
+        <div class="subsection" id="{container_id or f'weekly-{stat_type}'}" style="margin-bottom: 30px; display: {'block' if visible else 'none'};">
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 15px; flex-wrap: wrap;">
+                <div>
+                    <h4 style="color: #00d4aa; margin: 0;">{chart_title}</h4>
+                    <div class="week-toggle-controls" style="margin-top: 8px;">
+                        <label style="color: #e0e0e0; margin-right: 15px; font-size: 0.9em;">Time Range:</label>
+                        <button class="week-toggle-btn-{stat_type} active" data-weeks="all" onclick="showWeeklyChart_{stat_type}('all')">All Weeks</button>""" + (
+                f'<button class="week-toggle-btn-{stat_type}" data-weeks="12" onclick="showWeeklyChart_{stat_type}(\'12\')">Last 12 Weeks</button>' if len(weekly_stats) > 12 else ''
+            ) + (
+                f'<button class="week-toggle-btn-{stat_type}" data-weeks="8" onclick="showWeeklyChart_{stat_type}(\'8\')">Last 8 Weeks</button>' if len(weekly_stats) > 8 else ''
+            ) + f"""
                     </div>
                 </div>
-                
-                {chart_containers}
-                
-                {javascript}
+
+                <div class="bar-type-controls">
+                    <div style="color: #e0e0e0; margin-bottom: 8px; font-size: 0.9em; font-weight: bold;">📊 Show/Hide Bar Types:</div>
+                    <div class="bar-controls-grid">
+                        <label class="bar-control">
+                            <input type="checkbox" class="bar-toggle-{stat_type}" data-bar-type="all" checked> All Tickets
+                        </label>
+                        <label class="bar-control">
+                            <input type="checkbox" class="bar-toggle-{stat_type}" data-bar-type="weekday" checked> Weekday {stat_label}
+                        </label>
+                        {weekend_controls}
+                        <label class="bar-control">
+                            <input type="checkbox" class="bar-toggle-{stat_type}" data-bar-type="trend-all" checked> Overall Trend Line
+                        </label>
+                        <label class="bar-control">
+                            <input type="checkbox" class="bar-toggle-{stat_type}" data-bar-type="trend-weekday" checked> Weekday Trend Line
+                        </label>
+                    </div>
+                </div>
             </div>
-            """
+
+            {chart_containers}
+
+            {javascript}
+        </div>
+        """
             
         except Exception as e:
             print(f"Error creating interactive weekly response time chart: {e}")

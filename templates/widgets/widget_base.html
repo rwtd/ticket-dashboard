@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>{{ title if title else 'Widget' }}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    :root {
+      --widget-width: 100%;
+      --widget-height: 420px;
+      --bg-dark: #0f172a;
+      --text-dark: #e5e7eb;
+      --bg-light: #ffffff;
+      --text-light: #111827;
+    }
+
+    /* Respect provided dimensions via CSS variables */
+    .widget-container {
+      width: var(--widget-width, 100%);
+      height: var(--widget-height, 420px);
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      display: block;
+    }
+
+    /* Ensure inner chart fills container height */
+    .widget-container > div {
+      height: 100%;
+    }
+
+    body.dark {
+      background: var(--bg-dark);
+      color: var(--text-dark);
+    }
+
+    body.light {
+      background: var(--bg-light);
+      color: var(--text-light);
+    }
+
+    .iframe-note {
+      position: absolute;
+      left: -10000px; /* visually hidden but present for accessibility testing if needed */
+    }
+  </style>
+</head>
+<body class="{{ 'dark' if theme == 'dark' else 'light' }}">
+  <div class="widget-container" style="--widget-width: {{ width }}; --widget-height: {{ height }};">
+    <!-- chart_html includes the div+script and plotlyjs from CDN (include_plotlyjs='cdn') -->
+    {{ chart_html|safe }}
+  </div>
+
+  <div class="iframe-note" aria-hidden="true">This widget page is iframe-ready.</div>
+</body>
+</html>

@@ -1,0 +1,138 @@
+name: Deploy to Cloud Run
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: 'Container image tag (default: github.sha)'
+        required: false
+        default: ''
+      allow_unauthenticated:
+        description: 'Allow unauthenticated invocations'
+        required: false
+        type: boolean
+        default: true
+  push:
+    branches:
+      - main
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    name: Build and Deploy
+    runs-on: ubuntu-latest
+    outputs:
+      service_url: ${{ steps.get-url.outputs.service_url }}
+    env:
+      PROJECT_ID: ${{ vars.PROJECT_ID }}
+      REGION: ${{ vars.REGION }}
+      SERVICE_NAME: ${{ vars.SERVICE_NAME }}
+      AR_REPO: ${{ vars.AR_REPO }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Google Auth (Workload Identity Federation)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ vars.PROJECT_ID }}
+
+      - name: Validate configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${PROJECT_ID:?Missing GitHub variable PROJECT_ID}"
+          : "${REGION:?Missing GitHub variable REGION}"
+          : "${SERVICE_NAME:?Missing GitHub variable SERVICE_NAME}"
+          : "${AR_REPO:?Missing GitHub variable AR_REPO}"
+
+          echo "Config:"
+          echo "  PROJECT_ID=${PROJECT_ID}"
+          echo "  REGION=${REGION}"
+          echo "  SERVICE_NAME=${SERVICE_NAME}"
+          echo "  AR_REPO=${AR_REPO}"
+
+      - name: Ensure Artifact Registry repo exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! gcloud artifacts repositories describe "${AR_REPO}" --location="${REGION}" >/dev/null 2>&1; then
+            echo "Creating Artifact Registry repo ${AR_REPO} in ${REGION}..."
+            gcloud artifacts repositories create "${AR_REPO}" \
+              --repository-format=docker \
+              --location="${REGION}" \
+              --description="Application containers"
+          else
+            echo "Artifact Registry repo ${AR_REPO} already exists in ${REGION}"
+          fi
+
+      - name: Build image with Cloud Build
+        id: build
+        shell: bash
+        run: |
+          set -euo pipefail
+          IMAGE_TAG="${{ github.event.inputs.image_tag }}"
+          if [ -z "${IMAGE_TAG}" ]; then
+            IMAGE_TAG="${{ github.sha }}"
+          fi
+          IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${AR_REPO}/${SERVICE_NAME}:${IMAGE_TAG}"
+          echo "IMAGE=${IMAGE}"
+          echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
+          gcloud builds submit --tag "${IMAGE}" .
+
+      - name: Deploy to Cloud Run
+        id: deploy
+        shell: bash
+        run: |
+          set -euo pipefail
+          IMAGE="${{ steps.build.outputs.image }}"
+          WX="${{ vars.WIDGETS_XFO || 'SAMEORIGIN' }}"
+          WFA="${{ vars.WIDGETS_FRAME_ANCESTORS || "'self' https://*.hubspot.com" }}"
+
+          # Determine allow unauthenticated flag (default true)
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            ALLOW="${{ github.event.inputs.allow_unauthenticated || true }}"
+          else
+            ALLOW="true"
+          fi
+
+          AUTH_FLAG=""
+          if [ "${ALLOW}" = "true" ]; then
+            AUTH_FLAG="--allow-unauthenticated"
+          fi
+
+          echo "Deploying ${SERVICE_NAME} with:"
+          echo "  IMAGE=${IMAGE}"
+          echo "  AUTH_FLAG=${AUTH_FLAG:-'(none)'}"
+          echo "  WIDGETS_XFO=${WX}"
+          echo "  WIDGETS_FRAME_ANCESTORS=${WFA}"
+
+          gcloud run deploy "${SERVICE_NAME}" \
+            --region "${REGION}" \
+            --image "${IMAGE}" \
+            --platform managed \
+            ${AUTH_FLAG} \
+            --min-instances=0 \
+            --max-instances=3 \
+            --concurrency=80 \
+            --cpu=1 \
+            --memory=512Mi \
+            --set-env-vars "WIDGETS_XFO=${WX},WIDGETS_FRAME_ANCESTORS=${WFA}"
+
+      - name: Get service URL
+        id: get-url
+        shell: bash
+        run: |
+          set -euo pipefail
+          URL="$(gcloud run services describe "${SERVICE_NAME}" --region="${REGION}" --format='value(status.url)')"
+          echo "Service URL: ${URL}"
+          echo "service_url=${URL}" >> "$GITHUB_OUTPUT"

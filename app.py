@@ -28,6 +28,7 @@ from common_utils import (
     save_dashboard_file, save_summary_file, save_csv_file
 )
 from google_sheets_exporter import GoogleSheetsExporter
+from widgets import widgets_bp
 
 app = Flask(__name__)
 app.secret_key = 'ticket-dashboard-secret-key-change-in-production'
@@ -45,6 +46,21 @@ UPLOAD_FOLDER.mkdir(exist_ok=True)
 RESULTS_FOLDER.mkdir(exist_ok=True)
 TICKETS_FOLDER.mkdir(exist_ok=True)
 CHATS_FOLDER.mkdir(exist_ok=True)
+
+# Register Widgets blueprint (mounted at root)
+app.register_blueprint(widgets_bp)
+
+# Global security headers for framing/CSP (configurable via env)
+@app.after_request
+def apply_widget_security_headers(response):
+    xfo = os.environ.get('WIDGETS_XFO', 'SAMEORIGIN')
+    frame_ancestors = os.environ.get('WIDGETS_FRAME_ANCESTORS', "'self' https://*.hubspot.com")
+    if xfo:
+        response.headers['X-Frame-Options'] = xfo
+    if frame_ancestors:
+        # Set/replace CSP with frame-ancestors directive (Phase 0 scope)
+        response.headers['Content-Security-Policy'] = f"frame-ancestors {frame_ancestors}"
+    return response
 
 def allowed_file(filename):
     """Check if file extension is allowed"""

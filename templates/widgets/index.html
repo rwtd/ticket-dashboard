@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Available Widgets</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card: #111827;
+      --text: #e5e7eb;
+      --accent: #00d4aa;
+      --muted: #9ca3af;
+    }
+    body {
+      margin: 0;
+      padding: 24px;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, "Helvetica Neue", Arial, "Apple Color Emoji", "Segoe UI Emoji";
+      background: var(--bg);
+      color: var(--text);
+    }
+    h1 {
+      margin: 0 0 6px 0;
+      color: var(--accent);
+      font-size: 22px;
+    }
+    p.note {
+      margin: 0 0 16px 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid #1f2937;
+      border-radius: 10px;
+      padding: 16px;
+    }
+    ul {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 10px;
+    }
+    li {
+      background: #0b1220;
+      border: 1px solid #1f2937;
+      border-radius: 8px;
+      padding: 12px;
+    }
+    .title {
+      font-weight: 600;
+      margin-bottom: 6px;
+    }
+    .links a {
+      color: var(--accent);
+      text-decoration: none;
+      margin-right: 10px;
+      font-size: 13px;
+    }
+    .links a:hover {
+      text-decoration: underline;
+    }
+    code {
+      background: #0b1220;
+      border: 1px solid #1f2937;
+      border-radius: 4px;
+      padding: 1px 4px;
+      color: var(--text);
+    }
+  </style>
+</head>
+<body>
+  <h1>Widgets Registry</h1>
+  <p class="note">This page lists available embeddable widgets. For local/manual testing only. Each widget HTML is iframe-ready.</p>
+
+  <div class="card">
+    {% if widgets and widgets|length > 0 %}
+      <ul>
+        {% for w in widgets %}
+          <li>
+            <div class="title">{{ w.title }} <small style="color: var(--muted)">({{ w.name }})</small></div>
+            <div class="links">
+              <a href="{{ w.html_url }}" target="_blank">View</a>
+              <a href="{{ w.json_url }}" target="_blank">JSON</a>
+            </div>
+
+            {% if w.examples and w.examples|length > 0 %}
+              <div style="margin-top: 8px;">
+                <div style="color: var(--muted); font-size: 12px; margin-bottom: 4px;">Examples:</div>
+                <ul style="list-style: disc; padding-left: 18px; margin: 0;">
+                  {% for ex in w.examples %}
+                    <li style="margin: 2px 0;">
+                      <span style="font-size: 12px; color: var(--text);">{{ ex.label }}:</span>
+                      <span class="links">
+                        <a href="{{ ex.html_url }}" target="_blank">View</a>
+                        <a href="{{ ex.json_url }}" target="_blank">JSON</a>
+                      </span>
+                    </li>
+                  {% endfor %}
+                </ul>
+              </div>
+            {% endif %}
+
+            <div style="margin-top: 6px; color: var(--muted); font-size: 12px;">
+              Example iframe:
+              <div><code><iframe src="{{ w.html_url }}" width="100%" height="420" style="border:0"></iframe></code></div>
+            </div>
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <div style="color: var(--muted)">No widgets registered</div>
+    {% endif %}
+  </div>
+</body>
+</html>

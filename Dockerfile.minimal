@@ -1,8 +1,4 @@
-# Python Flask app for Cloud Run / local Docker
-# - Binds to 0.0.0.0 and respects $PORT (default 8080)
-# - Uses non-root user at runtime
-# - Installs dependencies efficiently for caching
-
+# Minimal Docker build for ticket dashboard
 FROM python:3.11-slim
 
 # Environment and defaults
@@ -14,8 +10,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # Set the working directory
 WORKDIR /app
 
+# Install system dependencies for some Python packages
+RUN apt-get update && apt-get install -y \
+    gcc \
+    g++ \
+    && rm -rf /var/lib/apt/lists/*
+
 # Install Python dependencies first to leverage layer caching
-COPY requirements.txt ./
+COPY requirements.minimal.txt ./requirements.txt
 RUN pip install --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
@@ -29,6 +31,5 @@ USER appuser
 # Expose Cloud Run standard port
 EXPOSE 8080
 
-# Start with gunicorn, binding to $PORT (fallback 8080) on 0.0.0.0
-# JSON-array form with sh -c to expand environment variable safely
+# Start with gunicorn
 CMD ["sh", "-c", "exec gunicorn --bind 0.0.0.0:${PORT:-8080} app:app"]
