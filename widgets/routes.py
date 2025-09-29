@@ -52,9 +52,18 @@ def _apply_widget_headers(response):
     """
     xfo = os.environ.get("WIDGETS_XFO", "SAMEORIGIN")
     frame_ancestors = os.environ.get("WIDGETS_FRAME_ANCESTORS", "'self' https://*.hubspot.com")
+    script_src = os.environ.get(
+        "WIDGETS_SCRIPT_SRC",
+        "'self' 'unsafe-inline' 'unsafe-eval' https://cdn.plot.ly data: blob:"
+    )
     response.headers["X-Frame-Options"] = xfo
-    # Replace any existing CSP with frame-ancestors directive we control for Phase 0
-    response.headers["Content-Security-Policy"] = f"frame-ancestors {frame_ancestors}"
+    directives = []
+    if frame_ancestors:
+        directives.append(f"frame-ancestors {frame_ancestors}")
+    if script_src:
+        directives.append(f"script-src {script_src}")
+    if directives:
+        response.headers["Content-Security-Policy"] = "; ".join(directives)
     return response
 
 

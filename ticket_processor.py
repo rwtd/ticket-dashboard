@@ -1819,6 +1819,20 @@ class TicketDataProcessor:
             # Generate unique IDs for this chart instance
             chart_id = f"weekly-{stat_type}"
 
+            buttons = [
+                f"<button class=\"week-toggle-btn-{stat_type} active\" data-weeks=\"all\" onclick=\"showWeeklyChart_{stat_type}('all')\">All Weeks</button>"
+            ]
+            if len(weekly_stats) > 12:
+                buttons.append(
+                    f"<button class=\"week-toggle-btn-{stat_type}\" data-weeks=\"12\" onclick=\"showWeeklyChart_{stat_type}('12')\">Last 12 Weeks</button>"
+                )
+            if len(weekly_stats) > 8:
+                buttons.append(
+                    f"<button class=\"week-toggle-btn-{stat_type}\" data-weeks=\"8\" onclick=\"showWeeklyChart_{stat_type}('8')\">Last 8 Weeks</button>"
+                )
+
+            buttons_html = ''.join(buttons)
+
             return f"""
         <div class="subsection" id="{container_id or f'weekly-{stat_type}'}" style="margin-bottom: 30px; display: {'block' if visible else 'none'};">
             <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 15px; flex-wrap: wrap;">
@@ -1826,11 +1840,7 @@ class TicketDataProcessor:
                     <h4 style="color: #00d4aa; margin: 0;">{chart_title}</h4>
                     <div class="week-toggle-controls" style="margin-top: 8px;">
                         <label style="color: #e0e0e0; margin-right: 15px; font-size: 0.9em;">Time Range:</label>
-                        <button class="week-toggle-btn-{stat_type} active" data-weeks="all" onclick="showWeeklyChart_{stat_type}('all')">All Weeks</button>""" + (
-                f'<button class="week-toggle-btn-{stat_type}" data-weeks="12" onclick="showWeeklyChart_{stat_type}(\'12\')">Last 12 Weeks</button>' if len(weekly_stats) > 12 else ''
-            ) + (
-                f'<button class="week-toggle-btn-{stat_type}" data-weeks="8" onclick="showWeeklyChart_{stat_type}(\'8\')">Last 8 Weeks</button>' if len(weekly_stats) > 8 else ''
-            ) + f"""
+                        {buttons_html}
                     </div>
                 </div>
 

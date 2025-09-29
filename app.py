@@ -55,11 +55,19 @@ app.register_blueprint(widgets_bp)
 def apply_widget_security_headers(response):
     xfo = os.environ.get('WIDGETS_XFO', 'SAMEORIGIN')
     frame_ancestors = os.environ.get('WIDGETS_FRAME_ANCESTORS', "'self' https://*.hubspot.com")
+    script_src = os.environ.get(
+        'WIDGETS_SCRIPT_SRC',
+        "'self' 'unsafe-inline' 'unsafe-eval' https://cdn.plot.ly data: blob:"
+    )
     if xfo:
         response.headers['X-Frame-Options'] = xfo
-    if frame_ancestors:
-        # Set/replace CSP with frame-ancestors directive (Phase 0 scope)
-        response.headers['Content-Security-Policy'] = f"frame-ancestors {frame_ancestors}"
+    if frame_ancestors or script_src:
+        directives = []
+        if frame_ancestors:
+            directives.append(f"frame-ancestors {frame_ancestors}")
+        if script_src:
+            directives.append(f"script-src {script_src}")
+        response.headers['Content-Security-Policy'] = '; '.join(directives)
     return response
 
 def allowed_file(filename):
