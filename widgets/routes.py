@@ -148,7 +148,7 @@ def render_widget_html(name: str):
     chart_params = _parse_widget_params(name, request.args)
     fig = builder(chart_params if chart_params is not None else {})
 
-    # Apply theme at layout level
+    # Apply theme at layout level (simple and safe)
     if theme == "light":
         fig.update_layout(template="plotly_white")
     else:

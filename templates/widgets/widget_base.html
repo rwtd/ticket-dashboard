@@ -5,38 +5,146 @@
   <title>{{ title if title else 'Widget' }}</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <style>
-    :root {
-      --widget-width: 100%;
-      --widget-height: 420px;
-      --bg-dark: #0f172a;
-      --text-dark: #e5e7eb;
-      --bg-light: #ffffff;
-      --text-light: #111827;
-    }
-
-    /* Respect provided dimensions via CSS variables */
-    .widget-container {
-      width: var(--widget-width, 100%);
-      height: var(--widget-height, 420px);
+    /* Match main dashboard sophisticated styling */
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
       margin: 0;
       padding: 0;
       overflow: hidden;
-      display: block;
+      width: 100%;
+      height: 100vh;
     }
 
-    /* Ensure inner chart fills container height */
-    .widget-container > div {
-      height: 100%;
-    }
-
+    /* Dark theme - matches main dashboard */
     body.dark {
-      background: var(--bg-dark);
-      color: var(--text-dark);
+      background: linear-gradient(135deg, #0c0c0c 0%, #1a1a2e 50%, #16213e 100%);
+      color: #e0e0e0;
     }
 
+    /* Light theme - professional light gradient */
     body.light {
-      background: var(--bg-light);
-      color: var(--text-light);
+      background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 50%, #dee2e6 100%);
+      color: #2c3e50;
+    }
+
+    .widget-container {
+      margin: 0;
+      padding: 8px;
+      overflow: hidden;
+      display: block;
+      border-radius: 8px;
+      width: calc(100% - 0px);
+      height: calc(100% - 0px);
+    }
+
+    /* Dark theme widget container */
+    body.dark .widget-container {
+      background: linear-gradient(145deg, #1e1e2e, #252538);
+      box-shadow: 0 4px 8px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.1);
+      border: 1px solid rgba(255,255,255,0.1);
+    }
+
+    /* Light theme widget container */
+    body.light .widget-container {
+      background: linear-gradient(145deg, #ffffff, #f8f9fa);
+      box-shadow: 0 4px 8px rgba(0,0,0,0.1), inset 0 1px 0 rgba(255,255,255,0.3);
+      border: 1px solid rgba(0,0,0,0.1);
+    }
+
+    /* Ensure inner chart fills container with proper spacing */
+    .widget-container > div {
+      height: calc(100% - 16px) !important;
+      width: calc(100% - 16px) !important;
+      border-radius: 6px;
+      overflow: hidden;
+    }
+
+    /* Override Plotly's default styling to match dashboard theme */
+    .widget-container .plotly-graph-div {
+      background: transparent !important;
+      border-radius: 6px;
+    }
+
+    /* Custom Plotly modebar styling - Dark theme */
+    body.dark .widget-container .modebar {
+      background: rgba(23, 23, 35, 0.8) !important;
+      border: 1px solid rgba(255,255,255,0.1) !important;
+      border-radius: 4px !important;
+    }
+
+    body.dark .widget-container .modebar-btn {
+      color: #e0e0e0 !important;
+    }
+
+    body.dark .widget-container .modebar-btn:hover {
+      background: rgba(0, 212, 170, 0.2) !important;
+    }
+
+    /* Custom Plotly modebar styling - Light theme */
+    body.light .widget-container .modebar {
+      background: rgba(248, 249, 250, 0.9) !important;
+      border: 1px solid rgba(0,0,0,0.1) !important;
+      border-radius: 4px !important;
+    }
+
+    body.light .widget-container .modebar-btn {
+      color: #2c3e50 !important;
+    }
+
+    body.light .widget-container .modebar-btn:hover {
+      background: rgba(0, 212, 170, 0.1) !important;
+    }
+
+    /* Dashboard-style title styling - Dark theme */
+    body.dark .widget-title {
+      color: #00d4aa;
+      text-shadow: 1px 1px 2px rgba(0,0,0,0.3);
+      text-align: center;
+      font-size: 1.2em;
+      font-weight: bold;
+      margin-bottom: 8px;
+    }
+
+    /* Dashboard-style title styling - Light theme */
+    body.light .widget-title {
+      color: #2c3e50;
+      text-shadow: 1px 1px 2px rgba(255,255,255,0.8);
+      text-align: center;
+      font-size: 1.2em;
+      font-weight: bold;
+      margin-bottom: 8px;
+    }
+
+    /* Style the chart area to match dashboard sections - Dark theme */
+    body.dark .widget-container .js-plotly-plot {
+      background: rgba(255,255,255,0.03) !important;
+      border-radius: 6px !important;
+      border: 1px solid rgba(255,255,255,0.1) !important;
+    }
+
+    /* Style the chart area to match dashboard sections - Light theme */
+    body.light .widget-container .js-plotly-plot {
+      background: rgba(0,0,0,0.02) !important;
+      border-radius: 6px !important;
+      border: 1px solid rgba(0,0,0,0.05) !important;
+    }
+
+    /* Additional chart styling to match dashboard look */
+    .widget-container .main-svg {
+      border-radius: 6px !important;
+    }
+
+    /* Override Plotly's text colors to match theme */
+    body.dark .widget-container .xtick,
+    body.dark .widget-container .ytick,
+    body.dark .widget-container .gtitle {
+      fill: #e0e0e0 !important;
+    }
+
+    body.light .widget-container .xtick,
+    body.light .widget-container .ytick,
+    body.light .widget-container .gtitle {
+      fill: #2c3e50 !important;
     }
 
     .iframe-note {
@@ -46,7 +154,7 @@
   </style>
 </head>
 <body class="{{ 'dark' if theme == 'dark' else 'light' }}">
-  <div class="widget-container" style="--widget-width: {{ width }}; --widget-height: {{ height }};">
+  <div class="widget-container">
     <!-- chart_html includes the div+script and plotlyjs from CDN (include_plotlyjs='cdn') -->
     {{ chart_html|safe }}
   </div>

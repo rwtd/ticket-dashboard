@@ -164,11 +164,107 @@ def _no_data_figure(title: str, x_title: str, y_title: str) -> go.Figure:
     return fig
 
 
+def _find_latest_processed_data(source: str) -> Optional[Path]:
+    """
+    Find the latest processed data file from the main app's results folder.
+    
+    Args:
+        source: 'tickets' or 'chats'
+        
+    Returns:
+        Path to the latest processed CSV file, or None if not found
+    """
+    try:
+        results_dir = Path("results")
+        if not results_dir.exists():
+            return None
+        
+        # Look for the most recent results directory
+        result_dirs = [d for d in results_dir.iterdir() if d.is_dir()]
+        if not result_dirs:
+            return None
+        
+        # Sort by directory name (timestamp format YYYY-MM-DD_HH-MM-SS)
+        result_dirs.sort(reverse=True)
+        
+        # Check recent directories for processed data
+        for result_dir in result_dirs[:5]:  # Check last 5 runs
+            if source == "tickets":
+                processed_file = result_dir / "tickets_transformed.csv"
+            else:  # chats
+                processed_file = result_dir / "chats_transformed.csv"
+            
+            if processed_file.exists():
+                return processed_file
+        
+        return None
+    except Exception:
+        return None
+
+
+def _load_processed_dataframe(source: str, start_dt: Optional[datetime], end_dt: Optional[datetime]) -> Optional[pd.DataFrame]:
+    """
+    Load processed data from the main app's results, with date filtering.
+    
+    Args:
+        source: 'tickets' or 'chats'
+        start_dt: Optional start datetime for filtering
+        end_dt: Optional end datetime for filtering
+        
+    Returns:
+        Filtered DataFrame or None if no processed data found
+    """
+    try:
+        processed_file = _find_latest_processed_data(source)
+        if processed_file is None:
+            return None
+        
+        # Load processed data
+        df = pd.read_csv(processed_file)
+        if len(df) == 0:
+            return None
+        
+        # Apply date filtering if requested
+        if start_dt is not None or end_dt is not None:
+            if source == "tickets":
+                date_col = "Create date"
+            else:  # chats
+                date_col = "chat_creation_date_adt"
+            
+            if date_col not in df.columns:
+                return df  # Return unfiltered if date column missing
+            
+            # Convert date column to datetime
+            df[date_col] = pd.to_datetime(df[date_col])
+            
+            # Apply filters
+            if start_dt is not None:
+                df = df[df[date_col] >= start_dt]
+            if end_dt is not None:
+                df = df[df[date_col] <= end_dt]
+        
+        return df.copy()
+    except Exception:
+        return None
+
+
 def _load_source_dataframe(source: str, start_dt: Optional[datetime], end_dt: Optional[datetime]) -> Optional[pd.DataFrame]:
     """
-    Load and process data for the given source using existing processors.
+    Load and process data for the given source with enhanced integration.
+    
+    Priority:
+    1. Use processed data from main app if available
+    2. Fallback to processing raw CSV files
+    
     Returns the filtered DataFrame (copy) or None on failure.
     """
+    # First, try to load processed data from main app
+    processed_df = _load_processed_dataframe(source, start_dt, end_dt)
+    if processed_df is not None:
+        print(f"✅ Using processed {source} data from main app")
+        return processed_df
+    
+    # Fallback to raw data processing (original behavior)
     try:
         if source == "tickets":
             data_dir = Path("tickets")
@@ -179,6 +275,7 @@ def _load_source_dataframe(source: str, start_dt: Optional[datetime], end_dt: Op
             proc.load_data(files)
             proc.process_data()
             df_filtered, _, _ = proc.filter_date_range(start_dt, end_dt)
+            print(f"⚙️ Processed raw {source} data (no processed data found)")
             return df_filtered.copy()
         elif source == "chats":
             data_dir = Path("chats")
@@ -189,6 +286,7 @@ def _load_source_dataframe(source: str, start_dt: Optional[datetime], end_dt: Op
             proc.load_data(files)
             proc.process_data()
             df_filtered, _, _ = proc.filter_date_range(start_dt, end_dt)
+            print(f"⚙️ Processed raw {source} data (no processed data found)")
             return df_filtered.copy()
         else:
             return None

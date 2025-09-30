@@ -1,5 +1,5 @@
-#!/usr/bin/env python3
-"""
+    #!/usr/bin/env python3
+""" 
 Ticket Dashboard Web UI
 A simple Flask web interface for the ticket analytics dashboard
 """
@@ -54,7 +54,7 @@ app.register_blueprint(widgets_bp)
 @app.after_request
 def apply_widget_security_headers(response):
     xfo = os.environ.get('WIDGETS_XFO', 'SAMEORIGIN')
-    frame_ancestors = os.environ.get('WIDGETS_FRAME_ANCESTORS', "'self' https://*.hubspot.com")
+    frame_ancestors = os.environ.get('WIDGETS_FRAME_ANCESTORS', "'self' https://*.hubspot.com https://*.hubspotusercontent.com https://app.hubspot.com https://app-eu1.hubspot.com https://app-ap1.hubspot.com https://local.hubspot.com https://*.hs-sites.com https://*.hs-sitesqa.com https://*.hscollectedforms.net https://*.hsforms.com https://*.hsforms.net https://*.hsleadflows.net https://*.hsmanage.com https://*.hs-sites.com")
     script_src = os.environ.get(
         'WIDGETS_SCRIPT_SRC',
         "'self' 'unsafe-inline' 'unsafe-eval' https://cdn.plot.ly data: blob:"
@@ -1319,6 +1319,57 @@ def get_live_logs():
                 'start_time': current_run.start_time,
                 'records_processed': current_run.records_processed
             } if current_run else None
+        })
+        
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+
+@app.route('/api/widget-data-status')
+def get_widget_data_status():
+    """Get status of processed data available for widgets"""
+    try:
+        from widgets.registry import _find_latest_processed_data
+        
+        status = {
+            'tickets': None,
+            'chats': None
+        }
+        
+        # Check for processed ticket data
+        ticket_file = _find_latest_processed_data('tickets')
+        if ticket_file and ticket_file.exists():
+            stat = ticket_file.stat()
+            df = pd.read_csv(ticket_file, nrows=1)  # Just check structure
+            status['tickets'] = {
+                'file_path': str(ticket_file),
+                'last_modified': datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                'size_kb': round(stat.st_size / 1024, 1),
+                'available': True,
+                'columns_count': len(df.columns)
+            }
+        else:
+            status['tickets'] = {'available': False}
+        
+        # Check for processed chat data
+        chat_file = _find_latest_processed_data('chats')
+        if chat_file and chat_file.exists():
+            stat = chat_file.stat()
+            df = pd.read_csv(chat_file, nrows=1)  # Just check structure
+            status['chats'] = {
+                'file_path': str(chat_file),
+                'last_modified': datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                'size_kb': round(stat.st_size / 1024, 1),
+                'available': True,
+                'columns_count': len(df.columns)
+            }
+        else:
+            status['chats'] = {'available': False}
+        
+        return jsonify({
+            'success': True,
+            'processed_data': status,
+            'note': 'Widgets will use processed data if available, otherwise fall back to raw CSV processing'
         })
         
     except Exception as e:
