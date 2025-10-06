@@ -32,8 +32,10 @@
             background: rgba(23, 23, 35, 0.8);
             color: #00d4aa;
             padding: 30px;
+            padding-right: 500px; /* Make room for 3 buttons */
             text-align: center;
             border-bottom: 3px solid #00d4aa;
+            position: relative;
         }
 
         .header h1 {
@@ -44,6 +46,56 @@
         .header p {
             font-size: 1.2em;
             opacity: 0.9;
+        }
+
+        .header-buttons {
+            position: absolute;
+            top: 30px;
+            right: 30px;
+            display: flex;
+            gap: 10px;
+        }
+
+        .admin-link, .ai-link, .widgets-link {
+            padding: 10px 20px;
+            color: white;
+            text-decoration: none;
+            border-radius: 8px;
+            font-weight: 600;
+            transition: transform 0.2s, box-shadow 0.2s;
+            font-size: 14px;
+        }
+
+        .admin-link {
+            background: linear-gradient(45deg, #667eea, #764ba2);
+        }
+
+        .admin-link:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .ai-link {
+            background: linear-gradient(45deg, #00d4aa, #00b894);
+        }
+
+        .ai-link:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0, 212, 170, 0.4);
+        }
+
+        .widgets-link {
+            background: linear-gradient(45deg, #f093fb, #f5576c);
+        }
+
+        .widgets-link:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(240, 147, 251, 0.4);
+        }
+
+        /* Hide admin-only sections from main page */
+        .admin-only {
+            display: none !important;
         }
 
         .content {
@@ -523,10 +575,24 @@
             
             .header {
                 padding: 20px;
+                padding-right: 20px; /* Reset padding on mobile */
+                padding-top: 80px; /* Make room for stacked buttons */
             }
-            
+
             .header h1 {
                 font-size: 2em;
+            }
+
+            .header-buttons {
+                position: static;
+                flex-direction: column;
+                gap: 5px;
+                margin-bottom: 20px;
+            }
+
+            .admin-link, .ai-link, .widgets-link {
+                width: 100%;
+                text-align: center;
             }
             
             .content {
@@ -542,8 +608,13 @@
 <body>
     <div class="container">
         <div class="header">
+            <div class="header-buttons">
+                <a href="/widgets" target="_blank" class="widgets-link">🌺 Widget Garden</a>
+                <a href="#" onclick="openAIAssistant(); return false;" class="ai-link">🤖 AI Assistant</a>
+                <a href="/admin" class="admin-link">⚙️ Admin Panel</a>
+            </div>
             <h1>📋 Ticket Analytics Dashboard</h1>
-            <p>Upload CSV files and generate comprehensive ticket analytics reports</p>
+            <p>Generate comprehensive ticket and chat analytics reports</p>
         </div>
 
         <div class="content">
@@ -558,7 +629,7 @@
 
 
             <!-- File Upload Section (Collapsible) -->
-            <div class="section">
+            <div class="section admin-only">
                 <div class="collapsible-header" onclick="toggleSection('upload-content', 'upload-toggle')">
                     <h2>📁 Upload Ticket Data <span id="upload-toggle" style="float: right;">▼</span></h2>
                     <small>Drag and drop CSV files or click to browse</small>
@@ -629,92 +700,6 @@
                         <input type="radio" name="analyticsType" value="individual_agent" onchange="updateAnalyticsType()"> 
                         👤 Individual Agent vs Team
                     </label>
-                </div>
-                <div class="form-group">
-                    <label>
-                        <input type="radio" name="analyticsType" value="ai_assistant" onchange="updateAnalyticsType()"> 
-                        🤖 AI-Powered Analysis
-                    </label>
-                </div>
-            </div>
-
-            <!-- Data Source Selection -->
-            <div class="section">
-                <h2>📁 Select Data Source</h2>
-                <div class="form-group">
-                    <label>
-                        <input type="radio" name="dataSource" value="existing" checked onchange="updateFileSelection()"> 
-                        Use Existing Files
-                    </label>
-                </div>
-                <div class="form-group">
-                    <label>
-                        <input type="radio" name="dataSource" value="uploaded" onchange="updateFileSelection()"> 
-                        Use Uploaded Files
-                    </label>
-                </div>
-
-                <!-- Existing Files -->
-                <div id="existing-files" class="file-selection">
-                    <!-- Ticket Files -->
-                    <div id="ticket-files" class="file-group">
-                        <h3>Available Ticket Files</h3>
-                        {% if ticket_files %}
-                        <div class="checkbox-group">
-                            {% for file in ticket_files %}
-                            <div class="checkbox-item">
-                                <input type="checkbox" id="ticket-{{ loop.index }}" name="ticketFiles" value="{{ file.name }}" checked>
-                                <label for="ticket-{{ loop.index }}">
-                                    <strong>{{ file.name }}</strong><br>
-                                    <small>{{ "%.1f"|format(file.size/1024) }} KB • {{ file.modified }}</small>
-                                </label>
-                            </div>
-                            {% endfor %}
-                        </div>
-                        {% else %}
-                        <p style="color: #7f8c8d;">No CSV files found in tickets/ directory</p>
-                        {% endif %}
-                    </div>
-
-                    <!-- Chat Files -->
-                    <div id="chat-files" class="file-group hidden">
-                        <h3>Available Chat Files</h3>
-                        {% if chat_files %}
-                        <div class="checkbox-group">
-                            {% for file in chat_files %}
-                            <div class="checkbox-item">
-                                <input type="checkbox" id="chat-{{ loop.index }}" name="chatFiles" value="{{ file.name }}" checked>
-                                <label for="chat-{{ loop.index }}">
-                                    <strong>{{ file.name }}</strong><br>
-                                    <small>{{ "%.1f"|format(file.size/1024) }} KB • {{ file.modified }}</small>
-                                </label>
-                            </div>
-                            {% endfor %}
-                        </div>
-                        {% else %}
-                        <p style="color: #7f8c8d;">No CSV files found in chats/ directory</p>
-                        {% endif %}
-                    </div>
-                </div>
-
-                <!-- Uploaded Files -->
-                <div id="uploaded-files" class="file-selection hidden">
-                    <h3>Uploaded Files</h3>
-                    {% if uploaded_files %}
-                    <div class="checkbox-group">
-                        {% for file in uploaded_files %}
-                        <div class="checkbox-item">
-                            <input type="checkbox" id="uploaded-{{ loop.index }}" name="uploadedFiles" value="{{ file.name }}" checked>
-                            <label for="uploaded-{{ loop.index }}">
-                                <strong>{{ file.name }}</strong><br>
-                                <small>{{ "%.1f"|format(file.size/1024) }} KB • {{ file.modified }}</small>
-                            </label>
-                        </div>
-                        {% endfor %}
-                    </div>
-                    {% else %}
-                    <p style="color: #7f8c8d;">No uploaded files available</p>
-                    {% endif %}
                 </div>
             </div>
 
@@ -876,19 +861,8 @@
                 </div>
             </div>
 
-            <!-- Options -->
-            <div class="section">
-                <h2>⚙️ Analysis Options</h2>
-                <div class="form-group">
-                    <label>
-                        <input type="checkbox" id="include-delayed" name="includeDelayed">
-                        Include delayed response tickets table
-                    </label>
-                </div>
-            </div>
-
             <!-- Export Settings Section -->
-            <div class="section">
+            <div class="section admin-only">
                 <div class="collapsible-header" onclick="toggleSection('settings-content', 'settings-toggle')">
                     <h2>⚙️ Export Settings <span id="settings-toggle" style="float: right;">▼</span></h2>
                     <small>Configure Google Docs export and other export options</small>
@@ -1094,7 +1068,7 @@
             </div>
 
             <!-- Processing Logs (Collapsible) -->
-            <div class="section">
+            <div class="section admin-only">
                 <div class="collapsible-header" onclick="toggleLogsSection()">
                     <h2>📋 Processing & Sync Logs <span id="logs-toggle">▶</span></h2>
                     <small>View real-time processing logs and Google Sheets sync history</small>
@@ -1312,12 +1286,17 @@
             }
             
             const dateType = document.querySelector('input[name="dateType"]:checked').value;
-            const dataSource = document.querySelector('input[name="dataSource"]:checked').value;
-            const includeDelayed = document.getElementById('include-delayed').checked;
+            const dataSource = 'sheets'; // Always use Google Sheets now
+            const includeDelayed = false; // Default to false (option moved to admin)
             
             // Get selected files based on analytics type and data source
             let selectedFiles = [];
-            if (dataSource === 'existing') {
+            
+            // For Google Sheets data source, no file selection needed
+            if (dataSource === 'sheets') {
+                // Use empty array - backend will use Google Sheets
+                selectedFiles = [];
+            } else if (dataSource === 'existing') {
                 if (analyticsType === 'tickets' || analyticsType === 'agent_performance' || analyticsType === 'individual_agent') {
                     selectedFiles = Array.from(document.querySelectorAll('input[name="ticketFiles"]:checked'))
                         .map(cb => cb.value);
@@ -1341,7 +1320,8 @@
                     .map(cb => cb.value);
             }
             
-            if (selectedFiles.length === 0) {
+            // Only check for selected files if not using Google Sheets
+            if (dataSource !== 'sheets' && selectedFiles.length === 0) {
                 showAlert('Please select at least one CSV file to analyze', 'error');
                 return;
             }
@@ -1858,10 +1838,15 @@
         }
 
         // Toggle collapsible sections
+        // Open AI Assistant in new window
+        function openAIAssistant() {
+            window.open('/ai-assistant', 'AI Assistant', 'width=800,height=600,menubar=no,toolbar=no,location=no,status=no');
+        }
+
         function toggleSection(contentId, toggleId) {
             const content = document.getElementById(contentId);
             const toggle = document.getElementById(toggleId);
-            
+
             if (content.style.display === 'none' || content.style.display === '') {
                 content.style.display = 'block';
                 toggle.textContent = '▲';

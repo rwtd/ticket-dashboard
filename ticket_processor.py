@@ -5,6 +5,7 @@ Handles ticket CSV files and generates ticket-specific analytics
 """
 
 import pandas as pd
+import numpy as np
 import pytz
 from datetime import datetime, timedelta
 import yaml
@@ -70,10 +71,12 @@ class TicketDataProcessor:
             
         self.df = self._convert_timezone(self.df)
         self.df = self._map_staff_names(self.df)
+        self.df = self._map_pipeline_names(self.df)
         self.df = self._add_weekend_flag(self.df)
         self.df = self._calc_first_response(self.df)
         self.df = self._remove_spam(self.df)
-        
+        self.df = self._remove_manager_tickets(self.df)
+
         return self.df
     
     def filter_date_range(self, start_dt: Optional[datetime], end_dt: Optional[datetime]) -> Tuple[pd.DataFrame, int, int]:
@@ -99,11 +102,20 @@ class TicketDataProcessor:
         
         for col in date_cols:
             if col in df.columns:
-                df[col] = (
-                    pd.to_datetime(df[col], errors="coerce")
-                    .dt.tz_localize(central, ambiguous=False, nonexistent="shift_forward")
-                    .dt.tz_convert(eastern)
-                )
+                df[col] = pd.to_datetime(df[col], errors="coerce")
+
+                # Skip if conversion failed and column is still object dtype
+                if not pd.api.types.is_datetime64_any_dtype(df[col]):
+                    continue
+
+                # Check if already timezone-aware
+                if df[col].dt.tz is None:
+                    # Not timezone-aware, localize to CDT first
+                    df[col] = df[col].dt.tz_localize(central, ambiguous=False, nonexistent="shift_forward")
+                elif df[col].dt.tz != eastern:
+                    # Already timezone-aware but not in eastern, convert to eastern
+                    df[col] = df[col].dt.tz_convert(eastern)
+                # If already in eastern timezone, no conversion needed
         
         print("Converted CDT → EDT (+1h)")
         return df
@@ -114,17 +126,55 @@ class TicketDataProcessor:
             "Girly E": "Girly",
             "Gillie E": "Girly",
             "Gillie": "Girly",
-            "Nora N": "Nova", 
+            "Nora N": "Nova",
             "Nora": "Nova",
             "Chris S": "Francis",
-            "Chris": "Francis", 
+            "Chris": "Francis",
             "Shan D": "Bhushan",
             "Shan": "Bhushan",
         }
-        df["Case Owner"] = df["Ticket owner"].map(mapping).fillna(df["Ticket owner"])
-        print("Mapped staff names.")
+
+        # Check which column name exists (could be "Ticket owner" or "Case Owner")
+        owner_col = None
+        if "Ticket owner" in df.columns:
+            owner_col = "Ticket owner"
+        elif "Case Owner" in df.columns:
+            owner_col = "Case Owner"
+
+        if owner_col:
+            df["Case Owner"] = df[owner_col].map(mapping).fillna(df[owner_col])
+            print("Mapped staff names.")
+        else:
+            print("Warning: No owner column found to map staff names")
+
         return df
-    
+
+    def _map_pipeline_names(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Map pipeline IDs to readable labels"""
+        # Pipeline mapping from HubSpot
+        pipeline_mapping = {
+            '0': 'Support Pipeline',
+            '147307289': 'Live Chat',
+            '648529801': 'Upgrades/Downgrades',
+            '667370066': 'Success',
+            '724973238': 'Customer Onboarding',
+            '76337708': 'Dev Tickets',
+            '77634704': 'Marketing, Finance',
+            '803109779': 'Product Testing Requests - Enterprise',
+            '803165721': 'Trial Account Requests - Enterprise',
+            '95256452': 'Enterprise and VIP Tickets',
+            '95947431': 'SPAM Tickets'
+        }
+
+        if "Pipeline" in df.columns:
+            # Convert to string first (in case they're numeric)
+            df["Pipeline"] = df["Pipeline"].astype(str).map(pipeline_mapping).fillna(df["Pipeline"])
+            print("Mapped pipeline IDs to readable names.")
+        else:
+            print("Warning: No Pipeline column found")
+
+        return df
+
     def _add_weekend_flag(self, df: pd.DataFrame) -> pd.DataFrame:
         """Flag tickets created during off-hours using agent-specific schedules with EDT timezone and buffer periods"""
         try:
@@ -253,23 +303,41 @@ class TicketDataProcessor:
     
     def _calc_first_response(self, df: pd.DataFrame) -> pd.DataFrame:
         """Calculate first response times"""
+
+        # Check if we have the required columns for first response calculation
+        has_response_col = "First agent email response date" in df.columns
+        has_create_col = "Create date" in df.columns
+        has_pipeline_col = "Pipeline" in df.columns
+
+        if not has_create_col:
+            print("Warning: 'Create date' column not found, skipping first response calculation")
+            df["First Response Time"] = pd.NaT
+            df["First Response Time (Hours)"] = pd.NA
+            return df
+
         def _delta(row):
-            if row["Pipeline"] == "Live Chat ":
+            # Handle Live Chat pipeline
+            if has_pipeline_col and row.get("Pipeline") == "Live Chat ":
                 return pd.Timedelta(seconds=30)
-            if pd.isna(row["First agent email response date"]) or pd.isna(row["Create date"]):
+
+            # Check if response date column exists and has value
+            if not has_response_col or pd.isna(row.get("First agent email response date")) or pd.isna(row["Create date"]):
                 return pd.NaT
-            
+
             # Calculate response time
             response_time = row["First agent email response date"] - row["Create date"]
-            
+
             # Validate that response time is positive (response after ticket creation)
             if response_time.total_seconds() <= 0:
                 return pd.NaT  # Treat negative/zero response times as invalid
-                
+
             return response_time
-        
+
         df["First Response Time"] = df.apply(_delta, axis=1)
-        df["First Response Time (Hours)"] = df["First Response Time"].dt.total_seconds() / 3600
+        # Convert Timedelta to hours (use .total_seconds() on the values, not .dt accessor)
+        df["First Response Time (Hours)"] = df["First Response Time"].apply(
+            lambda x: x.total_seconds() / 3600 if pd.notna(x) else pd.NA
+        )
         
         # Log validation results
         total_records = len(df)
@@ -291,6 +359,28 @@ class TicketDataProcessor:
         df = df[df["Pipeline"] != "SPAM Tickets"].copy()
         removed_count = pre_count - len(df)
         print(f"Removed {removed_count:,} SPAM tickets.")
+        return df
+
+    def _remove_manager_tickets(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Remove manager tickets (Richie) - only include support team agents"""
+        pre_count = len(df)
+        # Only include tickets from support team: Bhushan, Girly, Nova, Francis
+        support_agents = ['Bhushan', 'Girly', 'Nova', 'Francis']
+
+        # Get the owner column name (could be "Case Owner" or "Ticket owner")
+        owner_col = None
+        for col in ['Case Owner', 'Ticket owner']:
+            if col in df.columns:
+                owner_col = col
+                break
+
+        if owner_col:
+            df = df[df[owner_col].isin(support_agents)].copy()
+            removed_count = pre_count - len(df)
+            print(f"Removed {removed_count:,} manager tickets (non-support team).")
+        else:
+            print("Warning: Could not find owner column to filter manager tickets.")
+
         return df
     
     def generate_analytics(self, analysis_df: pd.DataFrame, args) -> Dict:
@@ -539,12 +629,16 @@ class TicketDataProcessor:
         
         # Calculate response time stats excluding LiveChat tickets
         if len(non_livechat_df) > 0:
+            # Convert pd.NA to np.nan for aggregation compatibility
+            non_livechat_df = non_livechat_df.copy()
+            non_livechat_df["First Response Time (Hours)"] = non_livechat_df["First Response Time (Hours)"].replace({pd.NA: np.nan})
+
             response_stats = non_livechat_df.groupby(owner_col)["First Response Time (Hours)"].agg(["mean", "median", "std"])
             response_stats.columns = ["Avg_Response_Time", "Median_Response_Time", "Response_Time_Std"]
             agent_stats = agent_stats.join(response_stats, how='left')
         else:
             agent_stats["Avg_Response_Time"] = float('nan')
-            agent_stats["Median_Response_Time"] = float('nan') 
+            agent_stats["Median_Response_Time"] = float('nan')
             agent_stats["Response_Time_Std"] = float('nan')
         
         # Flatten column names - now they should already be flat
@@ -692,6 +786,10 @@ class TicketDataProcessor:
             
             # Calculate response time stats excluding LiveChat tickets
             if len(non_livechat_df) > 0:
+                # Convert pd.NA to np.nan for aggregation compatibility
+                non_livechat_df = non_livechat_df.copy()
+                non_livechat_df["First Response Time (Hours)"] = non_livechat_df["First Response Time (Hours)"].replace({pd.NA: np.nan})
+
                 response_stats = non_livechat_df.groupby(owner_col)["First Response Time (Hours)"].agg(["mean", "median"])
                 response_stats.columns = ["Avg_Response_Time", "Median_Response_Time"]
                 agent_stats = agent_stats.join(response_stats, how='left')
@@ -764,10 +862,14 @@ class TicketDataProcessor:
             fig2, ax2 = plt.subplots(figsize=(12, 6))
             x_pos = np.arange(len(agent_stats))
             width = 0.35
-            
-            bars2a = ax2.bar(x_pos - width/2, agent_stats["Avg_Response_Time"], width,
+
+            # Fill NA values with 0 for plotting
+            avg_times = agent_stats["Avg_Response_Time"].fillna(0)
+            median_times = agent_stats["Median_Response_Time"].fillna(0)
+
+            bars2a = ax2.bar(x_pos - width/2, avg_times, width,
                            label='Average', color='#ec4899', alpha=0.8)
-            bars2b = ax2.bar(x_pos + width/2, agent_stats["Median_Response_Time"], width,
+            bars2b = ax2.bar(x_pos + width/2, median_times, width,
                            label='Median', color='#10b981', alpha=0.8)
             
             ax2.set_title('⏱️ Response Time Analysis: Average vs Median by Agent', fontsize=14, fontweight='bold', pad=20)
@@ -779,11 +881,12 @@ class TicketDataProcessor:
             ax2.legend()
             
             # Add value labels on bars
-            for bars, values in [(bars2a, agent_stats["Avg_Response_Time"]), (bars2b, agent_stats["Median_Response_Time"])]:
+            for bars, values in [(bars2a, avg_times), (bars2b, median_times)]:
                 for bar, value in zip(bars, values):
                     height = bar.get_height()
-                    ax2.text(bar.get_x() + bar.get_width()/2., height + 0.01,
-                            f'{height:.2f}h', ha='center', va='bottom', fontweight='bold', fontsize=8)
+                    if height > 0:  # Only show label if value exists
+                        ax2.text(bar.get_x() + bar.get_width()/2., height + 0.01,
+                                f'{height:.2f}h', ha='center', va='bottom', fontweight='bold', fontsize=8)
             
             plt.tight_layout()
             charts.append(fig_to_html(fig2))
@@ -1912,6 +2015,10 @@ class TicketDataProcessor:
             
             # Calculate response time stats excluding LiveChat tickets
             if len(non_livechat_df) > 0:
+                # Convert pd.NA to np.nan for aggregation compatibility
+                non_livechat_df = non_livechat_df.copy()
+                non_livechat_df["First Response Time (Hours)"] = non_livechat_df["First Response Time (Hours)"].replace({pd.NA: np.nan})
+
                 response_stats = non_livechat_df.groupby(owner_col)["First Response Time (Hours)"].agg(["mean", "median"])
                 response_stats.columns = ["Avg_Response_Time", "Median_Response_Time"]
                 agent_stats = agent_stats.join(response_stats, how='left')
@@ -1998,21 +2105,25 @@ class TicketDataProcessor:
             
             # Chart 2: Response Time Comparison (Average vs Median)
             fig2 = go.Figure()
-            
+
             x_agents = agent_stats.index
             x_pos = np.arange(len(x_agents))
-            
+
+            # Fill NA values with None for Plotly (will show gaps instead of 0)
+            avg_times = agent_stats["Avg_Response_Time"].replace({pd.NA: None})
+            median_times = agent_stats["Median_Response_Time"].replace({pd.NA: None})
+
             fig2.add_trace(go.Bar(
                 x=x_agents,
-                y=agent_stats["Avg_Response_Time"],
+                y=avg_times,
                 name='Average Response Time',
                 marker_color='rgba(102, 126, 234, 0.8)',
                 offsetgroup=1
             ))
-            
+
             fig2.add_trace(go.Bar(
                 x=x_agents,
-                y=agent_stats["Median_Response_Time"],
+                y=median_times,
                 name='Median Response Time',
                 marker_color='rgba(255, 107, 107, 0.8)',
                 offsetgroup=2
@@ -2253,6 +2364,7 @@ Period: {label}
 PROCESSING SUMMARY:
 - Original records: {len(self.original_df):,}
 - After SPAM removal: {len(self.df):,}
+- Support team only: Bhushan, Girly, Nova, Francis
 - Analyzed records: {len(analysis_df):,}
 - Weekend tickets: {analysis_df['Weekend_Ticket'].sum():,}
 

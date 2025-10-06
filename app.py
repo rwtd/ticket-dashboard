@@ -13,7 +13,19 @@ from flask import Flask, render_template, request, jsonify, send_file, redirect,
 from werkzeug.utils import secure_filename
 import tempfile
 import requests
+import warnings
+
+# Suppress FutureWarnings from pandas
+warnings.filterwarnings('ignore', category=FutureWarning)
+
 import pandas as pd
+
+# Load environment variables from .env file
+try:
+    from dotenv import load_dotenv
+    load_dotenv()  # Load .env file if it exists
+except ImportError:
+    pass  # python-dotenv not installed, skip
 
 # Import our analytics components
 from ticket_processor import TicketDataProcessor
@@ -29,6 +41,7 @@ from common_utils import (
 )
 from google_sheets_exporter import GoogleSheetsExporter
 from widgets import widgets_bp
+from admin_routes import admin_bp
 
 app = Flask(__name__)
 app.secret_key = 'ticket-dashboard-secret-key-change-in-production'
@@ -49,6 +62,9 @@ CHATS_FOLDER.mkdir(exist_ok=True)
 
 # Register Widgets blueprint (mounted at root)
 app.register_blueprint(widgets_bp)
+
+# Register Admin blueprint
+app.register_blueprint(admin_bp)
 
 # Global security headers for framing/CSP (configurable via env)
 @app.after_request
@@ -185,10 +201,64 @@ def analyze():
         # Determine which files to use based on analytics type and data source
         file_paths = []
         
-        if data_source == 'uploaded':
+        # Handle Google Sheets data source
+        if data_source == 'sheets':
+            # Use Google Sheets data - try to get from google_sheets_data_source
+            try:
+                from google_sheets_data_source import GoogleSheetsDataSource
+                
+                sheets_id = os.environ.get('GOOGLE_SHEETS_SPREADSHEET_ID')
+                creds_path = os.environ.get('GOOGLE_SHEETS_CREDENTIALS_PATH', 'service_account_credentials.json')
+                
+                if not sheets_id:
+                    return jsonify({
+                        'error': 'Google Sheets not configured. Please set up Google Sheets in the Admin Panel or select CSV files instead.',
+                        'suggestion': 'Go to Admin Panel → Configuration to set up Google Sheets, or use "Need ad-hoc data?" link to select local CSV files.'
+                    }), 400
+                
+                # Create temporary CSV files from Google Sheets data
+                sheets_source = GoogleSheetsDataSource(
+                    spreadsheet_id=sheets_id,
+                    credentials_path=creds_path
+                )
+                
+                temp_dir = Path(tempfile.mkdtemp())
+                
+                if analytics_type in ['tickets', 'combined', 'agent_performance', 'individual_agent']:
+                    tickets_df = sheets_source.get_tickets()
+                    if tickets_df is not None and not tickets_df.empty:
+                        temp_ticket_file = temp_dir / 'sheets_tickets.csv'
+                        tickets_df.to_csv(temp_ticket_file, index=False)
+                        file_paths.append(temp_ticket_file)
+                
+                if analytics_type in ['chats', 'combined']:
+                    chats_df = sheets_source.get_chats()
+                    if chats_df is not None and not chats_df.empty:
+                        temp_chat_file = temp_dir / 'sheets_chats.csv'
+                        chats_df.to_csv(temp_chat_file, index=False)
+                        if analytics_type == 'combined':
+                            # For combined, we'll handle this differently below
+                            pass
+                        else:
+                            file_paths = [temp_chat_file]
+                
+                if not file_paths and analytics_type != 'combined':
+                    return jsonify({
+                        'error': f'No data available in Google Sheets for {analytics_type} analysis',
+                        'suggestion': 'Please run a sync in the Admin Panel to populate Google Sheets with data, or use local CSV files instead.'
+                    }), 400
+                    
+            except Exception as e:
+                print(f"Error accessing Google Sheets: {e}")
+                return jsonify({
+                    'error': f'Failed to access Google Sheets: {str(e)}',
+                    'suggestion': 'Please check your Google Sheets configuration in the Admin Panel or use local CSV files instead.'
+                }), 400
+                
+        elif data_source == 'uploaded':
             file_paths = [UPLOAD_FOLDER / f for f in selected_files if f.endswith('.csv')]
         else:
-            # Handle different analytics types
+            # Handle different analytics types with local files
             if analytics_type == 'tickets':
                 source_dir = TICKETS_FOLDER
             elif analytics_type == 'chats':
@@ -205,7 +275,7 @@ def analyze():
                 else:
                     file_paths = list(source_dir.glob('*.csv'))
         
-        if not file_paths and analytics_type != 'combined':
+        if not file_paths and analytics_type != 'combined' and data_source != 'sheets':
             available_files = list(source_dir.glob('*.csv')) if 'source_dir' in locals() else []
             return jsonify({
                 'error': f'No CSV files found for {analytics_type} analysis',
@@ -1384,6 +1454,11 @@ def logs_page():
 def test_ai():
     """Test AI visibility"""
     return send_file('test_ai_visibility.html')
+
+@app.route('/ai-assistant')
+def ai_assistant():
+    """AI Assistant standalone page"""
+    return render_template('ai_assistant.html')
 
 # AI Assistant / Gemini API Integration
 

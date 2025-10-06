@@ -39,15 +39,16 @@
       list-style: none;
       padding: 0;
       margin: 0;
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-      gap: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
     }
     li {
       background: #0b1220;
       border: 1px solid #1f2937;
       border-radius: 8px;
-      padding: 12px;
+      padding: 20px;
+      max-width: 1200px;
     }
     .title {
       font-weight: 600;

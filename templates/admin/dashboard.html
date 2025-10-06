@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Dashboard - Ticket Dashboard</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: #f5f5f5;
+            padding: 20px;
+        }
+        .header {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        h1 { color: #333; }
+        .logout-btn {
+            padding: 10px 20px;
+            background: #dc3545;
+            color: white;
+            text-decoration: none;
+            border-radius: 5px;
+            transition: background 0.3s;
+        }
+        .logout-btn:hover { background: #c82333; }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        .card {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .card h2 {
+            margin-bottom: 15px;
+            color: #333;
+            font-size: 20px;
+        }
+        .status-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 0;
+            border-bottom: 1px solid #eee;
+        }
+        .status-item:last-child { border-bottom: none; }
+        .badge {
+            padding: 5px 10px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        .badge.success { background: #d4edda; color: #155724; }
+        .badge.error { background: #f8d7da; color: #721c24; }
+        .badge.warning { background: #fff3cd; color: #856404; }
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 5px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            display: inline-block;
+            text-decoration: none;
+            margin: 5px;
+        }
+        .btn-primary { background: #007bff; color: white; }
+        .btn-primary:hover { background: #0056b3; }
+        .btn-success { background: #28a745; color: white; }
+        .btn-success:hover { background: #218838; }
+        .btn-warning { background: #ffc107; color: #212529; }
+        .btn-warning:hover { background: #e0a800; }
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+        .actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 15px;
+        }
+        #result-message {
+            margin-top: 15px;
+            padding: 12px;
+            border-radius: 5px;
+            display: none;
+        }
+        #result-message.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        #result-message.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #007bff;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            animation: spin 1s linear infinite;
+            display: inline-block;
+            margin-left: 10px;
+            vertical-align: middle;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .info-text {
+            color: #666;
+            font-size: 14px;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div>
+            <h1>⚙️ Admin Dashboard</h1>
+            <a href="/" style="color: #007bff; text-decoration: none; font-size: 14px;">← Back to Main Dashboard</a>
+        </div>
+        <a href="/admin/logout" class="logout-btn">Logout</a>
+    </div>
+
+    <div class="grid">
+        <!-- API Status Card -->
+        <div class="card">
+            <h2>🔌 API Status</h2>
+            <div class="status-item">
+                <span>HubSpot API</span>
+                <span class="badge {% if config.hubspot_configured %}success{% else %}error{% endif %}">
+                    {% if config.hubspot_configured %}Configured{% else %}Not Configured{% endif %}
+                </span>
+            </div>
+            <div class="status-item">
+                <span>LiveChat API</span>
+                <span class="badge {% if config.livechat_configured %}success{% else %}error{% endif %}">
+                    {% if config.livechat_configured %}Configured{% else %}Not Configured{% endif %}
+                </span>
+            </div>
+            <div class="status-item">
+                <span>Google Sheets</span>
+                <span class="badge {% if config.sheets_configured %}success{% else %}error{% endif %}">
+                    {% if config.sheets_configured %}Configured{% else %}Not Configured{% endif %}
+                </span>
+            </div>
+            <div class="actions">
+                <button class="btn btn-primary" onclick="testConnections()">Test Connections</button>
+                <a href="/admin/configuration" class="btn btn-warning">Configure</a>
+            </div>
+            <div id="connection-results" style="margin-top: 15px;"></div>
+        </div>
+
+        <!-- Sync Status Card -->
+        <div class="card">
+            <h2>🔄 Sync Status</h2>
+            <div class="status-item">
+                <span>Last Ticket Sync</span>
+                <span>{% if sync_state and sync_state.last_ticket_sync %}{{ sync_state.last_ticket_sync }}{% else %}Never{% endif %}</span>
+            </div>
+            <div class="status-item">
+                <span>Last Chat Sync</span>
+                <span>{% if sync_state and sync_state.last_chat_sync %}{{ sync_state.last_chat_sync }}{% else %}Never{% endif %}</span>
+            </div>
+            <div class="status-item">
+                <span>Last Full Sync</span>
+                <span>{% if sync_state and sync_state.last_full_sync %}{{ sync_state.last_full_sync }}{% else %}Never{% endif %}</span>
+            </div>
+            <div class="info-text">
+                Sync Interval: {{ config.sync_interval }} hours<br>
+                Data Retention: {{ config.retention_days }} days
+            </div>
+        </div>
+
+        <!-- Data Status Card (NEW) -->
+        <div class="card">
+            <h2>📊 Data Source Status</h2>
+            <div id="data-status-content">
+                <div style="text-align: center; padding: 20px;">
+                    <div class="spinner"></div>
+                    <p style="margin-top: 10px;">Checking data sources...</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Sync Actions Card -->
+        <div class="card">
+            <h2>🚀 Sync Actions</h2>
+            <p class="info-text">Manually trigger data synchronization from APIs to Google Sheets</p>
+            <div class="actions">
+                <button class="btn btn-success" onclick="triggerSync('incremental')" id="btn-incremental">
+                    Incremental Sync
+                </button>
+                <button class="btn btn-warning" onclick="triggerSync('full')" id="btn-full">
+                    Full Sync (365 days)
+                </button>
+            </div>
+            <div id="sync-result" class="info-text" style="margin-top: 15px;"></div>
+        </div>
+
+        <!-- Quick Links Card -->
+        <div class="card">
+            <h2>📋 Quick Links</h2>
+            <div class="actions" style="flex-direction: column; align-items: stretch;">
+                <a href="/admin/sync-logs" class="btn btn-primary">View Sync Logs</a>
+                <a href="/admin/configuration" class="btn btn-primary">Edit Configuration</a>
+                <a href="/" class="btn btn-primary">Main Dashboard</a>
+                <a href="/widgets" class="btn btn-primary">Widgets</a>
+            </div>
+        </div>
+
+        <!-- System Actions Card -->
+        <div class="card">
+            <h2>🔧 System Actions</h2>
+            <p class="info-text">Application control and maintenance</p>
+            <div class="actions" style="flex-direction: column; align-items: stretch;">
+                <button class="btn btn-warning" onclick="restartApp()" id="btn-restart">
+                    🔄 Restart Application
+                </button>
+                <p class="info-text" style="margin-top: 10px; font-size: 12px;">
+                    Note: Restart may take 10-15 seconds. The page will reload automatically.
+                </p>
+            </div>
+            <div id="restart-result" class="info-text" style="margin-top: 15px;"></div>
+        </div>
+    </div>
+
+    <script>
+        function testConnections() {
+            const resultsDiv = document.getElementById('connection-results');
+            resultsDiv.innerHTML = '<div class="spinner"></div> Testing connections...';
+
+            fetch('/admin/test-connections', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'}
+            })
+            .then(response => response.json())
+            .then(data => {
+                let html = '<div style="margin-top: 10px;">';
+
+                for (const [api, result] of Object.entries(data)) {
+                    const icon = result.status === 'success' ? '✅' : result.status === 'not_configured' ? '⚠️' : '❌';
+                    const badge = result.status === 'success' ? 'success' : result.status === 'not_configured' ? 'warning' : 'error';
+                    html += `
+                        <div class="status-item">
+                            <span>${icon} ${api.toUpperCase()}</span>
+                            <span class="badge ${badge}">${result.message || result.status}</span>
+                        </div>
+                    `;
+                }
+
+                html += '</div>';
+                resultsDiv.innerHTML = html;
+            })
+            .catch(error => {
+                resultsDiv.innerHTML = `<div class="badge error">Error: ${error.message}</div>`;
+            });
+        }
+
+        function triggerSync(type) {
+            const resultDiv = document.getElementById('sync-result');
+            const btnIncremental = document.getElementById('btn-incremental');
+            const btnFull = document.getElementById('btn-full');
+
+            // Disable buttons
+            btnIncremental.disabled = true;
+            btnFull.disabled = true;
+
+            resultDiv.innerHTML = `<div class="spinner"></div> Running ${type} sync... This may take a few minutes.`;
+
+            fetch('/admin/trigger-sync', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({type: type})
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    resultDiv.innerHTML = `<span style="color: #28a745;">✅ ${data.message}</span>`;
+                    // Reload page after 2 seconds to show updated sync times
+                    setTimeout(() => location.reload(), 2000);
+                } else {
+                    resultDiv.innerHTML = `<span style="color: #dc3545;">❌ ${data.message}</span>`;
+                }
+            })
+            .catch(error => {
+                resultDiv.innerHTML = `<span style="color: #dc3545;">❌ Error: ${error.message}</span>`;
+            })
+            .finally(() => {
+                // Re-enable buttons
+                btnIncremental.disabled = false;
+                btnFull.disabled = false;
+            });
+        }
+
+        function checkDataStatus() {
+            const statusDiv = document.getElementById('data-status-content');
+            
+            fetch('/admin/data-status')
+                .then(response => response.json())
+                .then(data => {
+                    let html = '';
+                    
+                    // Google Sheets status
+                    html += `
+                        <div class="status-item">
+                            <span><strong>📊 Google Sheets</strong></span>
+                            <span></span>
+                        </div>
+                        <div style="padding-left: 20px; margin-bottom: 10px;">
+                            <div class="status-item">
+                                <span>Tickets</span>
+                                <span style="color: ${data.sheets.tickets > 0 ? '#28a745' : '#dc3545'}; font-weight: bold;">
+                                    ${data.sheets.tickets.toLocaleString()} records
+                                </span>
+                            </div>
+                            ${data.sheets.tickets_date_range ?
+                                `<div style="font-size: 11px; color: #888; margin-left: 20px;">${data.sheets.tickets_date_range}</div>` : ''}
+                            <div class="status-item">
+                                <span>Chats</span>
+                                <span style="color: ${data.sheets.chats > 0 ? '#28a745' : '#dc3545'}; font-weight: bold;">
+                                    ${data.sheets.chats.toLocaleString()} records
+                                </span>
+                            </div>
+                            ${data.sheets.chats_date_range ?
+                                `<div style="font-size: 11px; color: #888; margin-left: 20px;">${data.sheets.chats_date_range}</div>` : ''}
+                        </div>
+                    `;
+                    
+                    // Local CSV status
+                    html += `
+                        <div class="status-item" style="margin-top: 15px;">
+                            <span><strong>📁 Local CSV Files</strong></span>
+                            <span></span>
+                        </div>
+                        <div style="padding-left: 20px;">
+                            <div class="status-item">
+                                <span>Tickets</span>
+                                <span style="font-weight: bold;">
+                                    ${data.local.tickets.toLocaleString()} records (${data.local.ticket_files.length} files)
+                                </span>
+                            </div>
+                            <div class="status-item">
+                                <span>Chats</span>
+                                <span style="font-weight: bold;">
+                                    ${data.local.chats.toLocaleString()} records (${data.local.chat_files.length} files)
+                                </span>
+                            </div>
+                        </div>
+                    `;
+                    
+                    // Recommendations
+                    if (data.recommendations && data.recommendations.length > 0) {
+                        html += '<div style="margin-top: 20px;">';
+                        data.recommendations.forEach(rec => {
+                            const bgColor = rec.type === 'error' ? '#f8d7da' : rec.type === 'warning' ? '#fff3cd' : '#d4edda';
+                            const textColor = rec.type === 'error' ? '#721c24' : rec.type === 'warning' ? '#856404' : '#155724';
+                            const icon = rec.type === 'error' ? '❌' : rec.type === 'warning' ? '⚠️' : '✅';
+                            
+                            html += `
+                                <div style="background: ${bgColor}; color: ${textColor}; padding: 12px; border-radius: 5px; margin-bottom: 10px; font-size: 13px;">
+                                    ${icon} ${rec.message}
+                                </div>
+                            `;
+                        });
+                        html += '</div>';
+                    }
+                    
+                    statusDiv.innerHTML = html;
+                })
+                .catch(error => {
+                    statusDiv.innerHTML = `<div style="color: #dc3545; padding: 20px; text-align: center;">❌ Error loading data status: ${error.message}</div>`;
+                });
+        }
+
+        // Load data status on page load
+        window.addEventListener('DOMContentLoaded', function() {
+            checkDataStatus();
+            
+            // Auto-refresh every 30 seconds
+            setInterval(checkDataStatus, 30000);
+        });
+    </script>
+</body>
+</html>

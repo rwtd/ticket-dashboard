@@ -27,11 +27,20 @@ A revolutionary support analytics platform that combines traditional dashboards 
 # Install dependencies
 pip install -r requirements.txt
 
+# Configure API credentials (optional, for automated data sync)
+export HUBSPOT_API_KEY="your_hubspot_token"
+export LIVECHAT_PAT="your_livechat_token"
+export GOOGLE_SHEETS_SPREADSHEET_ID="your_sheet_id"
+
 # Start web interface
 python start_ui.py
 # Access at http://localhost:5000
 
-# Click "🤖 AI-Powered Analysis" and start chatting with your data!
+# Features:
+# - 🤖 AI-Powered Analysis - Chat with your data
+# - 📊 Traditional Dashboards - Visual analytics
+# - 🔧 Admin Panel (/admin) - Manage API sync and configuration
+# - 🌺 Widget Garden (/widgets) - Embeddable analytics for external platforms
 ```
 
 ### Traditional Analytics
@@ -46,6 +55,16 @@ python ticket_analytics.py --custom 15072025-22072025  # Date range
 ```
 
 ## 🎯 Revolutionary Features
+
+### 🔄 Automated Data Pipeline (NEW)
+- **API Integration** - Direct sync from HubSpot and LiveChat APIs
+- **Incremental Sync** - Only fetches new/modified data after initial load
+- **Google Sheets Hub** - Single source of truth for all analytics
+- **Admin Interface** - Web-based configuration and sync management
+- **Test Utilities** - Quick validation scripts for API connections
+- **Scheduled Sync** - Configurable intervals (1-24 hours)
+- **Smart Filtering** - Automatically excludes manager tickets, only shows support team
+- **Pipeline Mapping** - Converts numeric IDs to readable labels via HubSpot API
 
 ### 🧠 Enhanced Conversational AI Query Engine (`enhanced_query_engine.py`)
 - **Natural Time Queries** - "Last 35 days", "this quarter", "past 6 months"
@@ -72,12 +91,17 @@ python ticket_analytics.py --custom 15072025-22072025  # Date range
 ### 🔄 Data Processing Engine
 - **Direct CSV Querying** - DuckDB processes files without migration
 - **Timezone Conversion** - CDT→ADT (+1 hour) for tickets, UTC→ADT for chats
-- **Agent Name Standardization** - Consistent real names across all analytics
+- **Agent Name Standardization** - Consistent real names across all analytics (Girly, Bhushan, Francis, Nova)
+- **Manager Filtering** - Automatically excludes manager tickets (Richie) - only support team included
 - **Weekend Detection** - Friday 7PM+ through Monday 6AM using configurable schedules
+- **Pipeline Mapping** - Automatic conversion of pipeline IDs to readable labels (11 pipelines supported)
+- **Robust Error Handling** - Gracefully handles "Unknown" dates, NaT values, and invalid data
 
 ### 🌐 Export & Integration
 - **Google Sheets Sync** - Real-time export with automatic sheet creation
 - **Multi-format Export** - PNG, PDF, Google Docs with professional formatting
+- **Google OAuth** - Secure authentication for Docs/Slides API access ([Setup Guide](OAUTH_QUICK_START.md))
+- **Widget Garden** - Embeddable analytics widgets for external platforms (HubSpot, etc.)
 - **Auto-monitoring** - File watching with configurable sync intervals
 - **Processing Logs** - Real-time status tracking and error monitoring
 
@@ -113,6 +137,14 @@ python ticket_analytics.py --custom 15072025-22072025  # Date range
 
 ## 🏗️ Architecture Components
 
+### API Data Pipeline (NEW)
+- **`data_sync_service.py`** - Orchestrates automated API fetching and sync
+- **`hubspot_fetcher.py`** - HubSpot CRM API v3 client with pagination
+- **`livechat_fetcher.py`** - LiveChat API v3.5 client with thread parsing
+- **`google_sheets_data_source.py`** - Unified data access layer
+- **`admin_routes.py`** - Web-based admin interface for configuration
+- **`test_hubspot_connection.py`** - Quick API validation utility
+
 ### Core AI Engine
 - **`query_engine.py`** - Conversational AI with DuckDB + Gemini integration
 - **`conversation_manager.py`** - Persistent conversation history and context management
@@ -121,7 +153,7 @@ python ticket_analytics.py --custom 15072025-22072025  # Date range
 
 ### Traditional Analytics
 - **`ticket_processor.py`** - Support ticket processing with timezone conversion
-- **`chat_processor.py`** - LiveChat analysis with bot performance tracking  
+- **`chat_processor.py`** - LiveChat analysis with bot performance tracking
 - **`dashboard_builder.py`** - Interactive HTML dashboard generation
 - **`google_sheets_exporter.py`** - Automated Google Sheets integration
 
@@ -149,10 +181,30 @@ AI: "Yes! Your ticket volume has increased 23% over the past 3 months. September
 
 ## 🔧 Configuration
 
+### API Data Pipeline
+```bash
+# HubSpot (Private App token from Settings → Integrations → Private Apps)
+export HUBSPOT_API_KEY="your_hubspot_token"
+
+# LiveChat (Personal Access Token or username:password)
+export LIVECHAT_PAT="your_livechat_token"
+
+# Google Sheets (service account credentials and spreadsheet ID)
+export GOOGLE_SHEETS_SPREADSHEET_ID="your_sheet_id"
+export GOOGLE_SHEETS_CREDENTIALS_PATH="service_account_credentials.json"
+
+# Sync settings (optional)
+export DATA_SYNC_INTERVAL_HOURS=4  # Default: 4 hours
+export DATA_RETENTION_DAYS=365     # Default: 365 days
+
+# Admin interface password (change in production!)
+export ADMIN_PASSWORD="your_secure_password"
+```
+
 ### AI Configuration
-```python
-# Uses your existing Gemini API key
-GEMINI_API_KEY = "your-key-here"
+```bash
+# Google Gemini API key for conversational AI
+export GEMINI_API_KEY="your-gemini-key-here"
 ```
 
 ### Schedule Configuration (`config/schedule.yaml`)
@@ -192,9 +244,96 @@ results/YYYY-MM-DD_HH-MM-SS/
 ## 🎯 Production Ready
 
 - **Enterprise Security** - Local data processing, approved AI providers only
-- **Scalable Architecture** - Handles 3,289+ tickets, 2,203+ chats, 320+ columns
+- **Scalable Architecture** - Handles 4,700+ tickets, 4,400+ chats, 320+ columns
 - **Real-time Processing** - Instant query responses with conversation memory
+- **Automated Data Pipeline** - API-based sync eliminates manual CSV exports
 - **Team Collaboration** - Google Sheets integration for manual workflows
-- **Automated Monitoring** - File watching, sync status, error tracking
+- **Admin Interface** - Web-based configuration and sync management
+- **Incremental Sync** - Efficient updates with rate limiting and state tracking
+- **Comprehensive Testing** - Built-in test utilities for API validation
+- **Smart Data Filtering** - Automatic manager exclusion and pipeline mapping
+- **Error Resilience** - Graceful handling of invalid data and edge cases
+- **Widget Embeds** - Secure iframe support for external platforms with CSP headers
 
-**Ready for production deployment with conversational AI that understands your support data like a human analyst!** 🎯
+## 🚀 Quick Start Guide
+
+### 1. Basic Setup (No API Integration)
+```bash
+pip install -r requirements.txt
+python start_ui.py
+# Upload CSV files via web interface
+```
+
+### 2. API Integration (Automated Sync)
+```bash
+# Configure credentials
+export HUBSPOT_API_KEY="your_token"
+export LIVECHAT_PAT="your_token"
+export GOOGLE_SHEETS_SPREADSHEET_ID="your_sheet_id"
+
+# Test connections
+python test_hubspot_connection.py
+python data_sync_service.py --test
+
+# Run initial sync
+python data_sync_service.py --full
+
+# Start dashboard with automated data
+python start_ui.py
+```
+
+### 3. Google OAuth Setup (For Docs/Slides Export)
+```bash
+# Quick setup (5 minutes)
+python setup_google_oauth.py
+
+# This will guide you through:
+# 1. Enabling APIs (Docs, Drive, Slides)
+# 2. Creating OAuth client credentials
+# 3. Configuring redirect URI: http://localhost:9090/
+# 4. Testing authentication flow
+
+# See OAUTH_QUICK_START.md for details
+```
+
+### 4. Admin Interface
+```bash
+# Access admin panel at http://localhost:5000/admin
+# Default password: admin123 (change via ADMIN_PASSWORD env var)
+
+# Features:
+# - Configure API credentials (HubSpot, LiveChat, Google Sheets)
+# - Show/Hide toggle for credential viewing
+# - Test connections to verify setup
+# - Trigger manual syncs (full or incremental)
+# - View sync logs and status
+# - Data status dashboard (compare Sheets vs local CSVs)
+# - Manage all settings via web interface
+
+# See ADMIN_PANEL_GUIDE.md for detailed configuration instructions
+```
+
+### 5. Widget Garden
+```bash
+# Access widget gallery at http://localhost:5000/widgets
+
+# Features:
+# - Browse available embeddable widgets
+# - Copy iframe embed code
+# - Secure CSP headers for external embedding
+# - Pre-configured for HubSpot, custom platforms
+# - Vertical layout for easy browsing
+# - Test widgets before deploying
+```
+
+## 📚 Documentation
+
+- **[OAUTH_QUICK_START.md](OAUTH_QUICK_START.md)** - 5-minute Google OAuth setup for Docs/Slides export ⚡
+- **[GOOGLE_OAUTH_SETUP.md](GOOGLE_OAUTH_SETUP.md)** - Complete OAuth configuration guide with troubleshooting
+- **[ADMIN_PANEL_GUIDE.md](ADMIN_PANEL_GUIDE.md)** - Complete admin interface setup and configuration guide
+- **[API_ACCESS_REQUIREMENTS.md](API_ACCESS_REQUIREMENTS.md)** - How to obtain API credentials from HubSpot and LiveChat
+- **[CLAUDE.md](CLAUDE.md)** - Developer reference with commands and architecture details
+- **[IMPLEMENTATION_SUMMARY.md](IMPLEMENTATION_SUMMARY.md)** - Technical architecture and implementation overview
+- **[CLOUD_RUN_DEPLOYMENT_GUIDE.md](CLOUD_RUN_DEPLOYMENT_GUIDE.md)** - Production deployment instructions
+
+**Ready for production deployment with conversational AI and automated data pipeline!** 🎯

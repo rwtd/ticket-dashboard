@@ -95,9 +95,9 @@ class ChatDataProcessor:
         # Detect and normalize column names
         self._normalize_columns()
         
-        # Convert date columns to datetime
-        self.df['chat_creation_date'] = pd.to_datetime(self.df['chat_creation_date_raw'])
-        self.df['chat_start_date'] = pd.to_datetime(self.df['chat_start_date_raw'])
+        # Convert date columns to datetime (handle "Unknown" values with errors='coerce')
+        self.df['chat_creation_date'] = pd.to_datetime(self.df['chat_creation_date_raw'], errors='coerce')
+        self.df['chat_start_date'] = pd.to_datetime(self.df['chat_start_date_raw'], errors='coerce')
         
         # Convert to Atlantic timezone
         atlantic = pytz.timezone("Canada/Atlantic")

@@ -251,20 +251,40 @@ def _load_processed_dataframe(source: str, start_dt: Optional[datetime], end_dt:
 def _load_source_dataframe(source: str, start_dt: Optional[datetime], end_dt: Optional[datetime]) -> Optional[pd.DataFrame]:
     """
     Load and process data for the given source with enhanced integration.
-    
+
     Priority:
-    1. Use processed data from main app if available
-    2. Fallback to processing raw CSV files
-    
+    1. Google Sheets (primary data source - always up-to-date)
+    2. Processed data from main app results directory
+    3. Fallback to processing raw CSV files
+
     Returns the filtered DataFrame (copy) or None on failure.
     """
-    # First, try to load processed data from main app
+    # Priority 1: Try Google Sheets (primary source)
+    try:
+        from google_sheets_data_source import get_sheets_data_source
+
+        sheets_ds = get_sheets_data_source()
+        if sheets_ds is not None:
+            if source == "tickets":
+                df = sheets_ds.get_tickets_filtered(start_date=start_dt, end_date=end_dt)
+                if df is not None and not df.empty:
+                    print(f"✅ Using Google Sheets {source} data (primary source)")
+                    return df.copy()
+            elif source == "chats":
+                df = sheets_ds.get_chats_filtered(start_date=start_dt, end_date=end_dt)
+                if df is not None and not df.empty:
+                    print(f"✅ Using Google Sheets {source} data (primary source)")
+                    return df.copy()
+    except Exception as e:
+        print(f"⚠️  Google Sheets unavailable: {e}, falling back to local data")
+
+    # Priority 2: Try processed data from main app
     processed_df = _load_processed_dataframe(source, start_dt, end_dt)
     if processed_df is not None:
-        print(f"✅ Using processed {source} data from main app")
+        print(f"✅ Using processed {source} data from results directory")
         return processed_df
-    
-    # Fallback to raw data processing (original behavior)
+
+    # Priority 3: Fallback to raw data processing
     try:
         if source == "tickets":
             data_dir = Path("tickets")
@@ -275,7 +295,7 @@ def _load_source_dataframe(source: str, start_dt: Optional[datetime], end_dt: Op
             proc.load_data(files)
             proc.process_data()
             df_filtered, _, _ = proc.filter_date_range(start_dt, end_dt)
-            print(f"⚙️ Processed raw {source} data (no processed data found)")
+            print(f"⚙️ Processed raw {source} CSV data (fallback)")
             return df_filtered.copy()
         elif source == "chats":
             data_dir = Path("chats")
@@ -286,7 +306,7 @@ def _load_source_dataframe(source: str, start_dt: Optional[datetime], end_dt: Op
             proc.load_data(files)
             proc.process_data()
             df_filtered, _, _ = proc.filter_date_range(start_dt, end_dt)
-            print(f"⚙️ Processed raw {source} data (no processed data found)")
+            print(f"⚙️ Processed raw {source} CSV data (fallback)")
             return df_filtered.copy()
         else:
             return None

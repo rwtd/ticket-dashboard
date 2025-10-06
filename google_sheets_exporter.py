@@ -179,9 +179,21 @@ class GoogleSheetsExporter:
         # Add metadata columns
         df_enhanced['Last_Updated'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         df_enhanced['Data_Type'] = data_type
-        
+
+        # Convert datetime columns to ISO strings BEFORE converting everything to string
+        # This prevents NaT from becoming the string "NaT"
+        for col in df_enhanced.columns:
+            if pd.api.types.is_datetime64_any_dtype(df_enhanced[col]):
+                # Convert datetime to ISO string, NaT becomes empty string
+                df_enhanced[col] = df_enhanced[col].apply(
+                    lambda x: x.isoformat() if pd.notna(x) else ''
+                )
+
         # Convert to string and truncate long values for Google Sheets limits
         df_str = df_enhanced.astype(str).fillna('')
+
+        # Replace any remaining "NaT", "nan", "None" strings with empty strings
+        df_str = df_str.replace(['NaT', 'nan', 'None', '<NA>'], '')
         
         # Truncate cells that exceed Google Sheets character limit (50,000)
         for col in df_str.columns:
@@ -540,19 +552,24 @@ class GoogleSheetsExporter:
                     # Insert new record
                     inserts.append(row)
             
-            # Perform updates in batches
+            # Perform updates in batches (Google Sheets API limit is 500 requests per batch)
             if updates:
-                batch_update_data = {
-                    'valueInputOption': 'RAW',
-                    'data': updates[:100]  # Limit batch size
-                }
-                
-                self.service.spreadsheets().values().batchUpdate(
-                    spreadsheetId=spreadsheet_id,
-                    body=batch_update_data
-                ).execute()
-                
-                logger.info(f"📝 Updated {len(updates)} existing records")
+                batch_size = 500
+                for i in range(0, len(updates), batch_size):
+                    batch = updates[i:i+batch_size]
+                    batch_update_data = {
+                        'valueInputOption': 'RAW',
+                        'data': batch
+                    }
+
+                    self.service.spreadsheets().values().batchUpdate(
+                        spreadsheetId=spreadsheet_id,
+                        body=batch_update_data
+                    ).execute()
+
+                    logger.info(f"📝 Updated batch {i//batch_size + 1}: {len(batch)} records")
+
+                logger.info(f"✅ Total updated: {len(updates)} existing records")
             
             # Perform inserts
             if inserts:
@@ -587,15 +604,31 @@ class GoogleSheetsExporter:
                     return result
                 
                 end_col = col_num_to_letter(len(headers))
-                insert_range = f"{sheet_name}!A{last_row}:{end_col}{last_row+len(inserts)-1}"
-                self.service.spreadsheets().values().update(
-                    spreadsheetId=spreadsheet_id,
-                    range=insert_range,
-                    valueInputOption='RAW',
-                    body={'values': inserts}
-                ).execute()
-                
-                logger.info(f"➕ Inserted {len(inserts)} new records")
+
+                # Ensure sheet has enough rows before inserting
+                rows_needed = last_row + len(inserts)
+                self._ensure_sheet_size(spreadsheet_id, sheet_name, rows_needed, len(headers))
+
+                # Insert in batches to avoid hitting API limits (10,000 cells per request)
+                batch_size = 1000  # 1000 rows at a time
+                total_inserted = 0
+
+                for i in range(0, len(inserts), batch_size):
+                    batch = inserts[i:i+batch_size]
+                    current_last_row = last_row + i
+                    insert_range = f"{sheet_name}!A{current_last_row}:{end_col}{current_last_row+len(batch)-1}"
+
+                    self.service.spreadsheets().values().update(
+                        spreadsheetId=spreadsheet_id,
+                        range=insert_range,
+                        valueInputOption='RAW',
+                        body={'values': batch}
+                    ).execute()
+
+                    total_inserted += len(batch)
+                    logger.info(f"➕ Inserted batch {i//batch_size + 1}: {len(batch)} records")
+
+                logger.info(f"✅ Total inserted: {total_inserted} new records")
             
             # Clean up old data (beyond 365 days)
             self._cleanup_old_data(spreadsheet_id, sheet_name)
@@ -606,6 +639,65 @@ class GoogleSheetsExporter:
             logger.error(f"Upsert failed: {str(e)}")
             return False
     
+    def _ensure_sheet_size(self, spreadsheet_id: str, sheet_name: str, rows_needed: int, cols_needed: int):
+        """Ensure the sheet has enough rows and columns"""
+        try:
+            # Get sheet metadata to find sheet ID
+            sheet_metadata = self.service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
+            sheet_id = None
+            current_rows = 0
+            current_cols = 0
+
+            for sheet in sheet_metadata.get('sheets', []):
+                if sheet['properties']['title'] == sheet_name:
+                    sheet_id = sheet['properties']['sheetId']
+                    current_rows = sheet['properties']['gridProperties'].get('rowCount', 1000)
+                    current_cols = sheet['properties']['gridProperties'].get('columnCount', 26)
+                    break
+
+            if sheet_id is None:
+                logger.warning(f"Sheet '{sheet_name}' not found for resizing")
+                return
+
+            # Calculate if we need to expand
+            needs_resize = False
+            new_rows = current_rows
+            new_cols = current_cols
+
+            if rows_needed > current_rows:
+                new_rows = max(rows_needed + 1000, current_rows * 2)  # Add buffer
+                needs_resize = True
+
+            if cols_needed > current_cols:
+                new_cols = max(cols_needed + 10, current_cols * 2)  # Add buffer
+                needs_resize = True
+
+            if needs_resize:
+                logger.info(f"📏 Expanding sheet '{sheet_name}' from {current_rows}x{current_cols} to {new_rows}x{new_cols}")
+
+                request = {
+                    'updateSheetProperties': {
+                        'properties': {
+                            'sheetId': sheet_id,
+                            'gridProperties': {
+                                'rowCount': new_rows,
+                                'columnCount': new_cols
+                            }
+                        },
+                        'fields': 'gridProperties(rowCount,columnCount)'
+                    }
+                }
+
+                self.service.spreadsheets().batchUpdate(
+                    spreadsheetId=spreadsheet_id,
+                    body={'requests': [request]}
+                ).execute()
+
+                logger.info(f"✅ Sheet expanded successfully")
+
+        except Exception as e:
+            logger.error(f"Failed to resize sheet: {str(e)}")
+
     def _cleanup_old_data(self, spreadsheet_id: str, sheet_name: str):
         """Remove data older than 365 days"""
         try:

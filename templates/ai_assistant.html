@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Assistant - Coming Soon</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            padding: 20px;
+        }
+
+        .container {
+            text-align: center;
+            max-width: 600px;
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 60px 40px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+        }
+
+        .icon {
+            font-size: 100px;
+            margin-bottom: 30px;
+            animation: float 3s ease-in-out infinite;
+        }
+
+        @keyframes float {
+            0%, 100% {
+                transform: translateY(0);
+            }
+            50% {
+                transform: translateY(-20px);
+            }
+        }
+
+        h1 {
+            font-size: 2.5em;
+            margin-bottom: 20px;
+            font-weight: 700;
+        }
+
+        p {
+            font-size: 1.2em;
+            line-height: 1.6;
+            margin-bottom: 30px;
+            opacity: 0.9;
+        }
+
+        .features {
+            text-align: left;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+            padding: 20px 30px;
+            margin-top: 30px;
+        }
+
+        .features h3 {
+            margin-bottom: 15px;
+            font-size: 1.3em;
+        }
+
+        .features ul {
+            list-style: none;
+            padding: 0;
+        }
+
+        .features li {
+            padding: 8px 0;
+            padding-left: 25px;
+            position: relative;
+        }
+
+        .features li:before {
+            content: "✨";
+            position: absolute;
+            left: 0;
+        }
+
+        .close-btn {
+            margin-top: 30px;
+            padding: 12px 30px;
+            background: rgba(255, 255, 255, 0.2);
+            border: 2px solid white;
+            color: white;
+            border-radius: 8px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: all 0.3s;
+            font-weight: 600;
+        }
+
+        .close-btn:hover {
+            background: white;
+            color: #667eea;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+        }
+
+        .status {
+            display: inline-block;
+            background: rgba(255, 193, 7, 0.3);
+            padding: 8px 20px;
+            border-radius: 20px;
+            font-size: 0.9em;
+            margin-bottom: 20px;
+            border: 1px solid rgba(255, 193, 7, 0.5);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="icon">🤖</div>
+        <h1>AI Assistant</h1>
+        <div class="status">🚧 Coming Soon</div>
+        <p>
+            An intelligent AI-powered assistant for analyzing your support data is currently in development.
+        </p>
+
+        <div class="features">
+            <h3>Planned Features:</h3>
+            <ul>
+                <li>Natural language queries about your ticket data</li>
+                <li>Automatic insights and trend detection</li>
+                <li>Chat performance analysis</li>
+                <li>Agent performance recommendations</li>
+                <li>Predictive analytics for response times</li>
+                <li>Custom report generation</li>
+            </ul>
+        </div>
+
+        <button class="close-btn" onclick="window.close()">Close Window</button>
+    </div>
+</body>
+</html>

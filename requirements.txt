@@ -27,6 +27,7 @@ plotly>=5.0.0,<6.0.0          # Interactive visualizations
 Flask>=2.0.0,<3.0.0           # Web framework for UI
 Werkzeug>=2.0.0,<3.0.0        # WSGI toolkit for Flask
 gunicorn>=20.0.0,<22.0.0      # WSGI HTTP Server
+python-dotenv>=0.19.0         # Load environment variables from .env file
 
 # Export Functionality
 # -------------------
