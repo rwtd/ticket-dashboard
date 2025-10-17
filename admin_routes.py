@@ -19,9 +19,12 @@ logger = logging.getLogger(__name__)
 admin_bp = Blueprint('admin', __name__, url_prefix='/admin')
 
 # Simple authentication (use environment variable for password)
+# Note: Admin routes will be disabled if ADMIN_PASSWORD is not set
 ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD')
-if not ADMIN_PASSWORD:
-    raise RuntimeError("ADMIN_PASSWORD environment variable must be set for admin access")
+ADMIN_ENABLED = bool(ADMIN_PASSWORD)
+
+if not ADMIN_ENABLED:
+    logger.warning("ADMIN_PASSWORD not set - admin interface will be disabled")
 
 def require_auth(f):
     """Decorator to require authentication for admin routes"""
@@ -37,6 +40,9 @@ def require_auth(f):
 @admin_bp.route('/login', methods=['GET', 'POST'])
 def login():
     """Admin login page"""
+    if not ADMIN_ENABLED:
+        return "Admin interface is disabled. Set ADMIN_PASSWORD environment variable to enable.", 503
+    
     if request.method == 'POST':
         password = request.form.get('password')
         if password == ADMIN_PASSWORD:
