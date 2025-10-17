@@ -76,6 +76,7 @@ class TicketDataProcessor:
         self.df = self._calc_first_response(self.df)
         self.df = self._remove_spam(self.df)
         self.df = self._remove_manager_tickets(self.df)
+        self.df = self._add_canonical_utc_columns(self.df)
 
         return self.df
     
@@ -83,8 +84,25 @@ class TicketDataProcessor:
         """Filter data by date range"""
         if start_dt is None or end_dt is None:
             return self.df, len(self.df), len(self.df)
-            
-        mask = (self.df["Create date"] >= start_dt) & (self.df["Create date"] <= end_dt)
+
+        if "ticket_created_at_utc" in self.df.columns:
+            series = pd.to_datetime(self.df["ticket_created_at_utc"], errors="coerce", utc=True)
+        else:
+            series = pd.to_datetime(self.df["Create date"], errors="coerce")
+            if series.dt.tz is None:
+                series = series.dt.tz_localize(pytz.UTC)
+            else:
+                series = series.dt.tz_convert(pytz.UTC)
+
+        def _to_utc(dt: datetime) -> datetime:
+            if dt.tzinfo is None:
+                return pytz.UTC.localize(dt)
+            return dt.astimezone(pytz.UTC)
+
+        start_utc = _to_utc(start_dt)
+        end_utc = _to_utc(end_dt)
+
+        mask = (series >= start_utc) & (series <= end_utc)
         filtered = self.df[mask].copy()
         return filtered, len(self.df), len(filtered)
     
@@ -102,22 +120,33 @@ class TicketDataProcessor:
         
         for col in date_cols:
             if col in df.columns:
-                df[col] = pd.to_datetime(df[col], errors="coerce")
-
-                # Skip if conversion failed and column is still object dtype
-                if not pd.api.types.is_datetime64_any_dtype(df[col]):
-                    continue
-
-                # Check if already timezone-aware
-                if df[col].dt.tz is None:
-                    # Not timezone-aware, localize to CDT first
-                    df[col] = df[col].dt.tz_localize(central, ambiguous=False, nonexistent="shift_forward")
-                elif df[col].dt.tz != eastern:
-                    # Already timezone-aware but not in eastern, convert to eastern
+                df[col] = pd.to_datetime(df[col], errors="coerce", utc=True)
+                if pd.api.types.is_datetime64_any_dtype(df[col]):
                     df[col] = df[col].dt.tz_convert(eastern)
-                # If already in eastern timezone, no conversion needed
         
         print("Converted CDT → EDT (+1h)")
+        return df
+
+    def _add_canonical_utc_columns(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Add normalized UTC and ISO timestamp columns for downstream use."""
+        utc_targets = {
+            "Create date": "ticket_created_at",
+            "Last Modified Date": "ticket_last_modified",
+            "Close date": "ticket_closed_at",
+        }
+
+        for source_col, base_name in utc_targets.items():
+            if source_col not in df.columns:
+                continue
+
+            series = pd.to_datetime(df[source_col], errors="coerce", utc=True)
+            if not pd.api.types.is_datetime64_any_dtype(series):
+                continue
+
+            utc_series = series.dt.tz_convert(pytz.UTC)
+            df[f"{base_name}_utc"] = utc_series
+            df[f"{base_name}_iso"] = utc_series.dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
         return df
     
     def _map_staff_names(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -410,15 +439,42 @@ class TicketDataProcessor:
             if len(historic_day_counts) > 0:
                 analytics['charts'].append(self._create_historic_daily_volume_chart(historic_day_counts))
         
-        # Summary metrics
-        total_tickets = len(analysis_df)
-        weekend_tickets = analysis_df["Weekend_Ticket"].sum()
+        # Summary metrics - use last 90 days regardless of user's date selection
+        if self.df is not None and len(self.df) > 0:
+            from datetime import datetime, timedelta
+            now_utc = datetime.now(pytz.UTC)
+            ninety_days_ago_utc = now_utc - timedelta(days=90)
+
+            created_utc = pd.to_datetime(
+                self.df.get("ticket_created_at_utc", self.df.get("Create date")),
+                errors='coerce',
+            )
+
+            if not pd.api.types.is_datetime64_any_dtype(created_utc):
+                created_utc = pd.to_datetime(created_utc, errors='coerce')
+
+            if created_utc.dt.tz is None:
+                created_utc = created_utc.dt.tz_localize(pytz.UTC)
+            else:
+                created_utc = created_utc.dt.tz_convert(pytz.UTC)
+
+            summary_mask = (created_utc >= ninety_days_ago_utc) & (created_utc <= now_utc)
+            summary_df = self.df[summary_mask].copy()
+            summary_df["_created_at_utc"] = created_utc[summary_mask]
+        else:
+            summary_df = analysis_df
+
+        total_tickets = len(summary_df)
+        weekend_tickets = summary_df["Weekend_Ticket"].sum() if "Weekend_Ticket" in summary_df.columns else 0
         weekday_tickets = total_tickets - weekend_tickets
-        
-        # Response time analysis (weekdays only, excluding LiveChat)
+
+        # Response time analysis (weekdays only, excluding LiveChat) - use 90-day data
+        weekday_df_summary = summary_df[summary_df["Weekend_Ticket"] == False] if "Weekend_Ticket" in summary_df.columns else summary_df
+        weekday_non_livechat = weekday_df_summary[weekday_df_summary["Pipeline"] != "Live Chat "] if "Pipeline" in weekday_df_summary.columns else weekday_df_summary
+        avg_response_weekday = weekday_non_livechat["First Response Time (Hours)"].median() if "First Response Time (Hours)" in weekday_non_livechat.columns else None
+
+        # For charts and tables, continue using the user-selected analysis_df
         weekday_df = analysis_df[analysis_df["Weekend_Ticket"] == False]
-        weekday_non_livechat = weekday_df[weekday_df["Pipeline"] != "Live Chat "]
-        avg_response_weekday = weekday_non_livechat["First Response Time (Hours)"].median()
         
         # Find owner column for agent analysis
         owner_col = None
@@ -430,22 +486,26 @@ class TicketDataProcessor:
         weekend_df = analysis_df[analysis_df["Weekend_Ticket"] == True]
         avg_response_weekend = weekend_df["First Response Time (Hours)"].mean()
         
-        # Calculate daily averages for subtext
-        date_range_days = (analysis_df['Create date'].max() - analysis_df['Create date'].min()).days + 1
-        daily_avg_total = total_tickets / date_range_days if date_range_days > 0 else 0
-        daily_avg_weekday = weekday_tickets / date_range_days if date_range_days > 0 else 0
-        daily_avg_weekend = weekend_tickets / date_range_days if date_range_days > 0 else 0
+        # Calculate daily averages for subtext based on 90-day summary data
+        if len(summary_df) > 0:
+            summary_date_range_days = (summary_df['Create date'].max() - summary_df['Create date'].min()).days + 1
+        else:
+            summary_date_range_days = 90  # fallback to 90 days
+
+        daily_avg_total = total_tickets / summary_date_range_days if summary_date_range_days > 0 else 0
+        daily_avg_weekday = weekday_tickets / summary_date_range_days if summary_date_range_days > 0 else 0
+        daily_avg_weekend = weekend_tickets / summary_date_range_days if summary_date_range_days > 0 else 0
         
         analytics['metrics'] = [
             # Make weekday response time prominent and larger
-            create_metric_card(f"{avg_response_weekday:.3f}h" if pd.notna(avg_response_weekday) else "N/A", 
-                             "⚡ Median Response (Weekday)", "satisfaction-card-ultra"),
+            create_metric_card(f"{avg_response_weekday:.3f}h" if pd.notna(avg_response_weekday) else "N/A",
+                             "⚡ Median Response (Weekday) - 90d", "satisfaction-card-ultra"),
             # Add daily averages as subtext for count cards - alternating colors
-            create_metric_card(total_tickets, "Total Tickets", "transfer-card-ultra", 
+            create_metric_card(total_tickets, "Total Tickets (Last 90 Days)", "transfer-card-ultra",
                              f"{daily_avg_total:.1f} per day"),
-            create_metric_card(weekday_tickets, "Weekday Tickets", "satisfaction-card-ultra",
-                             f"{daily_avg_weekday:.1f} per day"), 
-            create_metric_card(weekend_tickets, "Weekend Tickets", "transfer-card-ultra",
+            create_metric_card(weekday_tickets, "Weekday Tickets (Last 90 Days)", "satisfaction-card-ultra",
+                             f"{daily_avg_weekday:.1f} per day"),
+            create_metric_card(weekend_tickets, "Weekend Tickets (Last 90 Days)", "transfer-card-ultra",
                              f"{daily_avg_weekend:.1f} per day"),
         ]
         
@@ -457,10 +517,15 @@ class TicketDataProcessor:
         if agent_charts:
             analytics['charts'].extend(agent_charts)
         
-        # Weekly response time trend chart
+        # Weekly response time trend chart (weekday focused)
         weekly_chart = self._create_weekly_response_time_chart(analysis_df)
         if weekly_chart:
             analytics['charts'].append(weekly_chart)
+
+        # Separate weekend response time chart (different scale)
+        weekend_chart = self._create_weekend_response_time_chart(analysis_df)
+        if weekend_chart:
+            analytics['charts'].append(weekend_chart)
         
         # Optional delayed response table
         if args.include_delayed_table:
@@ -1203,27 +1268,55 @@ class TicketDataProcessor:
     def _create_weekly_response_time_chart(self, analysis_df: pd.DataFrame) -> str:
         """Create a single weekly response chart with Mean/Median toggle (Median default)."""
         try:
+            print(f"🔄 Creating weekly response time chart...")
+            print(f"   Analysis DF shape: {analysis_df.shape}")
+            print(f"   Full DF shape: {self.df.shape if self.df is not None else 'None'}")
+            
+            # Check if we have the required data
+            if self.df is None or len(self.df) == 0:
+                print("⚠️  No full dataset available for weekly chart")
+                return ""
+                
+            if 'Create date' not in self.df.columns:
+                print("⚠️  'Create date' column missing from full dataset")
+                return ""
+                
+            if 'First Response Time (Hours)' not in self.df.columns:
+                print("⚠️  'First Response Time (Hours)' column missing from full dataset")
+                return ""
+            
             # Always use Plotly for consistency with chat analytics
             import plotly.graph_objects as go
 
             # Build both chart variants but show only one via UI (Median by default).
             # Note: weekend series/bars are hidden by default; toggles remain visible.
+            print("   Creating median chart variant...")
             median_chart = self._create_interactive_weekly_chart(
                 analysis_df,
                 stat_type='median',
                 visible=True,
                 container_id='weekly-stat-median'
             )
+            
+            if not median_chart:
+                print("⚠️  Median chart creation failed")
+                return ""
+                
+            print("   Creating mean chart variant...")
             mean_chart = self._create_interactive_weekly_chart(
                 analysis_df,
                 stat_type='mean',
                 visible=False,
                 container_id='weekly-stat-mean'
             )
+            
+            if not mean_chart:
+                print("⚠️  Mean chart creation failed")
+                return ""
 
             # Simple radio controls to switch between Median and Mean without re-rendering.
             # We only toggle container visibility here. Median is the default selection.
-            return f"""
+            result = f"""
             <div class="section">
                 <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
                     <h3 style="margin:0;">📈 Weekly Response Time Trends</h3>
@@ -1273,11 +1366,17 @@ class TicketDataProcessor:
             }}
             </script>
             """
+            
+            print(f"✅ Weekly response time chart created successfully ({len(result)} chars)")
+            return result
+            
         except ImportError:
             print("Plotly not available, falling back to static chart with simplified controls")
             return self._create_matplotlib_weekly_chart_fallback(analysis_df)
         except Exception as e:
-            print(f"Error creating weekly response time chart: {e}")
+            print(f"❌ Error creating weekly response time chart: {e}")
+            import traceback
+            traceback.print_exc()
             return ""
     
     def _create_matplotlib_weekly_chart_fallback(self, analysis_df: pd.DataFrame) -> str:
@@ -1563,6 +1662,128 @@ class TicketDataProcessor:
         except Exception as e:
             print(f"Error creating weekly response time chart: {e}")
             return ""
+
+    def _create_weekend_response_time_chart(self, analysis_df: pd.DataFrame) -> str:
+        """Create a weekend-only response time chart with proper scaling."""
+        try:
+            print(f"🔄 Creating weekend response time chart...")
+
+            # Use the full dataset to show all weekend data
+            df_all = self.df.copy()
+
+            if df_all is None or len(df_all) == 0:
+                print("⚠️  No full dataset available for weekend chart")
+                return ""
+
+            # Filter to weekend tickets only
+            weekend_df = df_all[df_all["Weekend_Ticket"] == True].copy()
+
+            if len(weekend_df) == 0:
+                print("⚠️  No weekend tickets found")
+                return ""
+
+            print(f"   Weekend tickets: {len(weekend_df)}")
+
+            # Check required columns
+            if 'First Response Time (Hours)' not in weekend_df.columns:
+                print("⚠️  'First Response Time (Hours)' column missing")
+                return ""
+
+            import plotly.graph_objects as go
+            from datetime import timedelta
+
+            # Calculate Monday dates for grouping
+            weekend_df['Monday'] = weekend_df["Create date"].dt.normalize().apply(
+                lambda x: x - timedelta(days=x.weekday())
+            )
+
+            # Calculate weekly weekend stats
+            weekend_stats = weekend_df.groupby('Monday').agg({
+                'First Response Time (Hours)': ['median', 'mean', 'count']
+            }).reset_index()
+
+            weekend_stats.columns = ['Monday', 'Weekend_Median', 'Weekend_Mean', 'Weekend_Count']
+            weekend_stats = weekend_stats[weekend_stats['Weekend_Count'] > 0]  # Only weeks with weekend tickets
+
+            if len(weekend_stats) == 0:
+                print("⚠️  No weekend statistics available")
+                return ""
+
+            # Format week labels
+            weekend_stats['Week_Label'] = weekend_stats['Monday'].dt.strftime('%b %d')
+
+            # Create figure
+            fig = go.Figure()
+
+            # Weekend median bars
+            fig.add_trace(go.Bar(
+                x=weekend_stats['Week_Label'],
+                y=weekend_stats['Weekend_Median'],
+                name='Weekend Median Response Time',
+                marker_color='rgba(255, 234, 167, 0.8)',
+                text=[f"{val:.1f}h" for val in weekend_stats['Weekend_Median']],
+                textposition='outside'
+            ))
+
+            # Add trend line
+            import numpy as np
+            if len(weekend_stats) > 1:
+                x_values = np.arange(len(weekend_stats))
+                y_values = weekend_stats['Weekend_Median'].values
+                z = np.polyfit(x_values, y_values, 1)
+                trend_line = np.poly1d(z)(x_values)
+
+                fig.add_trace(go.Scatter(
+                    x=weekend_stats['Week_Label'],
+                    y=trend_line,
+                    mode='lines',
+                    name='Weekend Trend',
+                    line=dict(color='rgba(255, 107, 107, 0.9)', width=3, dash='dot')
+                ))
+
+            # Update layout
+            fig.update_layout(
+                title=dict(
+                    text='🌅 Weekend Response Time Trends (Separate Scale)',
+                    font=dict(size=20, color='#e0e0e0'),
+                    x=0.5
+                ),
+                xaxis_title='Week Starting',
+                yaxis_title='Response Time (Hours)',
+                template='plotly_dark',
+                plot_bgcolor='rgba(30, 30, 46, 0.8)',
+                paper_bgcolor='rgba(23, 23, 35, 0.9)',
+                font=dict(color='#e0e0e0', size=16),
+                height=400,
+                margin=dict(l=50, r=50, t=80, b=50),
+                showlegend=True,
+                xaxis=dict(gridcolor='rgba(102, 126, 234, 0.2)', showgrid=True),
+                yaxis=dict(gridcolor='rgba(102, 126, 234, 0.2)', showgrid=True)
+            )
+
+            chart_html = fig.to_html(include_plotlyjs="cdn", div_id="weekend-response-chart")
+
+            return f"""
+            <div class="section">
+                <h3>🌅 Weekend Response Time Analysis</h3>
+                <div class="chart-container">
+                    {chart_html}
+                </div>
+                <div style="margin-top: 10px; padding: 10px; background: rgba(255, 234, 167, 0.05); border-radius: 6px; border-left: 4px solid #ffea7b;">
+                    <div style="color: #ffea7b; font-weight: bold; font-size: 0.9em; margin-bottom: 5px;">🌅 Weekend Analysis Notes:</div>
+                    <div style="color: #e0e0e0; font-size: 0.85em; line-height: 1.4;">
+                        • <b>Separate scale</b> optimized for weekend response times<br>
+                        • <b>Higher response times expected</b> due to limited weekend staffing<br>
+                        • <b>Trend analysis</b> shows improvement/decline over time<br>
+                        • <b>Weekend staffing</b> starts in 6 weeks - expect improvements!
+                    </div>
+                </div>
+            </div>
+            """
+
+        except Exception as e:
+            print(f"❌ Error creating weekend response time chart: {e}")
+            return ""
     
     def _create_interactive_weekly_chart(self, analysis_df: pd.DataFrame, stat_type: str = 'median', visible: bool = True, container_id: str = None) -> str:
         """Create interactive Plotly weekly chart with specified statistic type.
@@ -1573,71 +1794,139 @@ class TicketDataProcessor:
         - container_id: optional id for the outer container (for UI toggling)
         """
         try:
+            print(f"🔍 Creating interactive {stat_type} weekly chart...")
             import plotly.graph_objects as go
             from datetime import datetime, timedelta
             
             # Use the full dataset to show all weeks of 2025, regardless of analysis period
             df_all = self.df.copy()
             
+            if df_all is None or len(df_all) == 0:
+                print("⚠️  No full dataset available")
+                return ""
+            
             # Get actual date range from full data
             min_date = df_all["Create date"].min()
             max_date = df_all["Create date"].max()
             
             if pd.isna(min_date) or pd.isna(max_date):
+                print("⚠️  Invalid date range in dataset")
                 return ""
             
+            print(f"   Date range: {min_date} to {max_date}")
+            
             # Get Monday of each week - use naive datetime for consistency
-            df_all['Monday'] = df_all["Create date"].dt.normalize().apply(
-                lambda x: x - timedelta(days=x.weekday())
-            )
+            try:
+                df_all['Monday'] = df_all["Create date"].dt.normalize().apply(
+                    lambda x: x - timedelta(days=x.weekday())
+                )
+            except Exception as e:
+                print(f"⚠️  Error calculating Monday dates: {e}")
+                return ""
             
             # Debug: Check for data issues
-            print(f"Debug: Total tickets in analysis_df: {len(df_all)}")
-            print(f"Debug: Date range: {min_date} to {max_date}")
-            print(f"Debug: Unique Mondays: {df_all['Monday'].nunique()}")
+            print(f"   Total tickets: {len(df_all)}")
+            print(f"   Unique Mondays: {df_all['Monday'].nunique()}")
+            
+            # Check required columns
+            required_cols = ['Weekend_Ticket', 'First Response Time (Hours)']
+            missing_cols = [col for col in required_cols if col not in df_all.columns]
+            if missing_cols:
+                print(f"⚠️  Missing required columns: {missing_cols}")
+                return ""
             
             # Determine chart title and y-axis label based on stat_type
             stat_label = stat_type.title()
+            print(f"   Calculating {stat_label} statistics...")
             
-            # Calculate comprehensive weekly stats for ALL ticket types (using specified stat_type)
-            weekly_stats_all = df_all.groupby('Monday').agg({
-                'First Response Time (Hours)': [stat_type, 'count']
-            }).reset_index()
-            weekly_stats_all.columns = ['Monday', 'All_Tickets', 'All_Count']
+            # Check if we have valid response time data
+            valid_response_data = df_all['First Response Time (Hours)'].notna()
+            print(f"   Valid response times: {valid_response_data.sum()} of {len(df_all)}")
             
-            # Calculate weekly stats for WEEKDAY ONLY tickets (using specified stat_type)
-            df_weekday = df_all[df_all["Weekend_Ticket"] == False].copy()
-            print(f"Debug: Weekday tickets: {len(df_weekday)}")
-            if len(df_weekday) > 0:
-                weekly_stats_weekday = df_weekday.groupby('Monday').agg({
+            if valid_response_data.sum() == 0:
+                print("⚠️  No valid response time data available")
+                return ""
+            
+            try:
+                # Calculate comprehensive weekly stats for ALL ticket types (using specified stat_type)
+                print(f"   Calculating all tickets {stat_type}...")
+                weekly_stats_all = df_all.groupby('Monday').agg({
                     'First Response Time (Hours)': [stat_type, 'count']
                 }).reset_index()
-                weekly_stats_weekday.columns = ['Monday', 'Weekday_Only', 'Weekday_Count']
-            else:
-                weekly_stats_weekday = pd.DataFrame(columns=['Monday', 'Weekday_Only', 'Weekday_Count'])
+                weekly_stats_all.columns = ['Monday', 'All_Tickets', 'All_Count']
+                print(f"   All tickets weekly stats shape: {weekly_stats_all.shape}")
+            except Exception as e:
+                print(f"⚠️  Error calculating all tickets stats: {e}")
+                return ""
             
-            # Calculate weekly stats for WEEKEND ONLY tickets (using specified stat_type)
-            df_weekend = df_all[df_all["Weekend_Ticket"] == True].copy()
-            print(f"Debug: Weekend tickets: {len(df_weekend)}")
-            if len(df_weekend) > 0:
-                print(f"Debug: Weekend response times: {df_weekend['First Response Time (Hours)'].describe()}")
-                weekly_stats_weekend = df_weekend.groupby('Monday').agg({
-                    'First Response Time (Hours)': [stat_type, 'count']
-                }).reset_index()
-                weekly_stats_weekend.columns = ['Monday', 'Weekend_Only', 'Weekend_Count']
-            else:
-                weekly_stats_weekend = pd.DataFrame(columns=['Monday', 'Weekend_Only', 'Weekend_Count'])
+            try:
+                # Calculate weekly stats for WEEKDAY ONLY tickets (using specified stat_type)
+                df_weekday = df_all[df_all["Weekend_Ticket"] == False].copy()
+                print(f"   Weekday tickets: {len(df_weekday)}")
+                if len(df_weekday) > 0:
+                    weekly_stats_weekday = df_weekday.groupby('Monday').agg({
+                        'First Response Time (Hours)': [stat_type, 'count']
+                    }).reset_index()
+                    weekly_stats_weekday.columns = ['Monday', 'Weekday_Only', 'Weekday_Count']
+                    print(f"   Weekday weekly stats shape: {weekly_stats_weekday.shape}")
+                else:
+                    weekly_stats_weekday = pd.DataFrame(columns=['Monday', 'Weekday_Only', 'Weekday_Count'])
+                    print(f"   No weekday tickets found")
+            except Exception as e:
+                print(f"⚠️  Error calculating weekday stats: {e}")
+                return ""
+            
+            try:
+                # Calculate weekly stats for WEEKEND ONLY tickets (using specified stat_type)
+                df_weekend = df_all[df_all["Weekend_Ticket"] == True].copy()
+                print(f"   Weekend tickets: {len(df_weekend)}")
+                if len(df_weekend) > 0:
+                    valid_weekend_response = df_weekend['First Response Time (Hours)'].notna()
+                    print(f"   Valid weekend response times: {valid_weekend_response.sum()}")
+                    weekly_stats_weekend = df_weekend.groupby('Monday').agg({
+                        'First Response Time (Hours)': [stat_type, 'count']
+                    }).reset_index()
+                    weekly_stats_weekend.columns = ['Monday', 'Weekend_Only', 'Weekend_Count']
+                    print(f"   Weekend weekly stats shape: {weekly_stats_weekend.shape}")
+                else:
+                    weekly_stats_weekend = pd.DataFrame(columns=['Monday', 'Weekend_Only', 'Weekend_Count'])
+                    print(f"   No weekend tickets found")
+            except Exception as e:
+                print(f"⚠️  Error calculating weekend stats: {e}")
+                return ""
             
             # Merge all data
             weekly_stats = weekly_stats_all.merge(weekly_stats_weekday, on='Monday', how='left')
             if len(df_weekend) > 0:
                 weekly_stats = weekly_stats.merge(weekly_stats_weekend, on='Monday', how='left')
             
+            # Convert all numeric columns to proper float types and handle NaN values
+            numeric_cols = ['All_Tickets', 'All_Count', 'Weekday_Only', 'Weekday_Count']
+            if 'Weekend_Only' in weekly_stats.columns:
+                numeric_cols.extend(['Weekend_Only', 'Weekend_Count'])
+            
+            for col in numeric_cols:
+                if col in weekly_stats.columns:
+                    weekly_stats[col] = pd.to_numeric(weekly_stats[col], errors='coerce')
+                    
+            print(f"   Weekly stats dtypes after conversion: {weekly_stats.dtypes.to_dict()}")
+            print(f"   Weekly stats shape: {weekly_stats.shape}")
+            
+            # Check for empty data after conversion
+            if len(weekly_stats) == 0:
+                print("⚠️  No weekly data available after processing")
+                return ""
+            
             # Calculate overall statistics for trend lines (using specified stat_type)
-            stat_func = getattr(df_all['First Response Time (Hours)'], stat_type)
-            overall_stat_all = stat_func()
-            overall_stat_weekday = getattr(df_weekday['First Response Time (Hours)'], stat_type)()
-            overall_stat_weekend = getattr(df_weekend['First Response Time (Hours)'], stat_type)() if len(df_weekend) > 0 else None
+            try:
+                stat_func = getattr(df_all['First Response Time (Hours)'], stat_type)
+                overall_stat_all = stat_func()
+                overall_stat_weekday = getattr(df_weekday['First Response Time (Hours)'], stat_type)()
+                overall_stat_weekend = getattr(df_weekend['First Response Time (Hours)'], stat_type)() if len(df_weekend) > 0 else None
+                print(f"   Overall stats - All: {overall_stat_all}, Weekday: {overall_stat_weekday}, Weekend: {overall_stat_weekend}")
+            except Exception as e:
+                print(f"⚠️  Error calculating overall stats: {e}")
+                return ""
             
             # Create Plotly figure
             fig = go.Figure()
@@ -1685,61 +1974,96 @@ class TicketDataProcessor:
             import numpy as np
             x_values = np.arange(len(weekly_stats))
             
-            # Calculate trend for all tickets
-            if len(weekly_stats) > 1:
-                slope_all, intercept_all = np.polyfit(x_values, weekly_stats['All_Tickets'].values, 1)
-                trend_y_all = slope_all * x_values + intercept_all
-            else:
-                trend_y_all = [overall_stat_all] * len(weekly_stats)
-            
-            fig.add_trace(go.Scatter(
-                x=weekly_stats['Week_Label'],
-                y=trend_y_all,
-                mode='lines',
-                name='Trend Line (All)',
-                line=dict(color='rgba(102, 126, 234, 1)', width=2, dash='dash'),
-                visible=True,
-                customdata=['trend-all'] * len(weekly_stats),
-                legendgroup='trend-all',
-                uid='line-trend-all'
-            ))
-            
-            # Calculate trend for weekday tickets
-            if len(weekly_stats) > 1:
-                slope_weekday, intercept_weekday = np.polyfit(x_values, weekly_stats['Weekday_Only'].values, 1)
-                trend_y_weekday = slope_weekday * x_values + intercept_weekday
-            else:
-                trend_y_weekday = [overall_stat_weekday] * len(weekly_stats)
-            
-            fig.add_trace(go.Scatter(
-                x=weekly_stats['Week_Label'],
-                y=trend_y_weekday,
-                mode='lines',
-                name='Trend Line (Weekday)',
-                line=dict(color='rgba(255, 107, 107, 1)', width=2, dash='dot'),
-                visible=True,
-                customdata=['trend-weekday'] * len(weekly_stats),
-                legendgroup='trend-weekday',
-                uid='line-trend-weekday'
-            ))
-            
-            # Calculate trend for weekend tickets
-            if overall_stat_weekend is not None and len(weekly_stats) > 1:
-                slope_weekend, intercept_weekend = np.polyfit(x_values, weekly_stats['Weekend_Only'].values, 1)
-                trend_y_weekend = slope_weekend * x_values + intercept_weekend
+            try:
+                # Calculate trend for all tickets
+                if len(weekly_stats) > 1 and weekly_stats['All_Tickets'].notna().sum() > 1:
+                    # Remove NaN values for polyfit
+                    valid_mask = weekly_stats['All_Tickets'].notna()
+                    if valid_mask.sum() > 1:
+                        x_valid = x_values[valid_mask]
+                        y_valid = weekly_stats['All_Tickets'].values[valid_mask].astype(float)
+                        slope_all, intercept_all = np.polyfit(x_valid, y_valid, 1)
+                        trend_y_all = slope_all * x_values + intercept_all
+                    else:
+                        trend_y_all = [overall_stat_all] * len(weekly_stats)
+                else:
+                    trend_y_all = [overall_stat_all] * len(weekly_stats)
                 
                 fig.add_trace(go.Scatter(
                     x=weekly_stats['Week_Label'],
-                    y=trend_y_weekend,
+                    y=trend_y_all,
                     mode='lines',
-                    name='Trend Line (Weekend)',
-                    line=dict(color='rgba(255, 234, 167, 1)', width=2, dash='dashdot'),
-                    # Default hidden per requirements; user can enable via toggle
-                    visible=False,
-                    customdata=['trend-weekend'] * len(weekly_stats),
-                    legendgroup='trend-weekend',
-                    uid='line-trend-weekend'
+                    name='Trend Line (All)',
+                    line=dict(color='rgba(102, 126, 234, 1)', width=2, dash='dash'),
+                    visible=True,
+                    customdata=['trend-all'] * len(weekly_stats),
+                    legendgroup='trend-all',
+                    uid='line-trend-all'
                 ))
+            except Exception as e:
+                print(f"⚠️  Error creating all tickets trend line: {e}")
+                # Continue without trend line
+            
+            try:
+                # Calculate trend for weekday tickets
+                if len(weekly_stats) > 1 and 'Weekday_Only' in weekly_stats.columns and weekly_stats['Weekday_Only'].notna().sum() > 1:
+                    # Remove NaN values for polyfit
+                    valid_mask = weekly_stats['Weekday_Only'].notna()
+                    if valid_mask.sum() > 1:
+                        x_valid = x_values[valid_mask]
+                        y_valid = weekly_stats['Weekday_Only'].values[valid_mask].astype(float)
+                        slope_weekday, intercept_weekday = np.polyfit(x_valid, y_valid, 1)
+                        trend_y_weekday = slope_weekday * x_values + intercept_weekday
+                    else:
+                        trend_y_weekday = [overall_stat_weekday] * len(weekly_stats)
+                else:
+                    trend_y_weekday = [overall_stat_weekday] * len(weekly_stats)
+                
+                fig.add_trace(go.Scatter(
+                    x=weekly_stats['Week_Label'],
+                    y=trend_y_weekday,
+                    mode='lines',
+                    name='Trend Line (Weekday)',
+                    line=dict(color='rgba(255, 107, 107, 1)', width=2, dash='dot'),
+                    visible=True,
+                    customdata=['trend-weekday'] * len(weekly_stats),
+                    legendgroup='trend-weekday',
+                    uid='line-trend-weekday'
+                ))
+            except Exception as e:
+                print(f"⚠️  Error creating weekday trend line: {e}")
+                # Continue without trend line
+            
+            try:
+                # Calculate trend for weekend tickets
+                if (overall_stat_weekend is not None and
+                    len(weekly_stats) > 1 and
+                    'Weekend_Only' in weekly_stats.columns and
+                    weekly_stats['Weekend_Only'].notna().sum() > 1):
+                    
+                    # Remove NaN values for polyfit
+                    valid_mask = weekly_stats['Weekend_Only'].notna()
+                    if valid_mask.sum() > 1:
+                        x_valid = x_values[valid_mask]
+                        y_valid = weekly_stats['Weekend_Only'].values[valid_mask].astype(float)
+                        slope_weekend, intercept_weekend = np.polyfit(x_valid, y_valid, 1)
+                        trend_y_weekend = slope_weekend * x_values + intercept_weekend
+                        
+                        fig.add_trace(go.Scatter(
+                            x=weekly_stats['Week_Label'],
+                            y=trend_y_weekend,
+                            mode='lines',
+                            name='Trend Line (Weekend)',
+                            line=dict(color='rgba(255, 234, 167, 1)', width=2, dash='dashdot'),
+                            # Default hidden per requirements; user can enable via toggle
+                            visible=False,
+                            customdata=['trend-weekend'] * len(weekly_stats),
+                            legendgroup='trend-weekend',
+                            uid='line-trend-weekend'
+                        ))
+            except Exception as e:
+                print(f"⚠️  Error creating weekend trend line: {e}")
+                # Continue without trend line
             
             # Unified title per requirements (no '- Mean/Median Values' suffix)
             chart_title = '📈 Weekly Response Time Trends'
@@ -1807,17 +2131,11 @@ class TicketDataProcessor:
             
             # Create enhanced toggleable chart container with proper JavaScript
             weekend_available = 'Weekend_Only' in weekly_stats.columns
-            weekend_controls = f'''
-                <label class="bar-control">
-                    <input type="checkbox" class="bar-toggle-{stat_type}" data-bar-type="weekend"> Weekend {stat_label}
-                </label>
-                <label class="bar-control">
-                    <input type="checkbox" class="bar-toggle-{stat_type}" data-bar-type="trend-weekend"> Weekend Trend Line
-                </label>
-            ''' if weekend_available else ''
+            # WEEKEND CONTROLS DISABLED: Weekend staffing starts in 6 weeks
+            weekend_controls = ''  # No weekend controls until staffing is in place
             
             chart_containers = '\n'.join([
-                f'<div id="weekly-chart-{stat_type}-{variant}" class="weekly-chart-{stat_type}-container" style="display: {"block" if variant == "all" else "none"};">{html}</div>'
+                f'<div id="weekly-chart-{stat_type}-{variant}" class="weekly-chart-{stat_type}-container" style="display: {"block" if variant == "12" else "none"};">{html}</div>'
                 for variant, html in charts_html
             ])
             
@@ -1845,8 +2163,7 @@ class TicketDataProcessor:
                     activeBtn.classList.add('active');
                 }}
                 
-                // Apply current bar visibility settings
-                applyBarVisibility_{stat_type}();
+                // Weekend controls disabled - no bar visibility changes needed
             }}
 
             // Explicit defaults: weekend series off by default; others on
@@ -1923,11 +2240,11 @@ class TicketDataProcessor:
             chart_id = f"weekly-{stat_type}"
 
             buttons = [
-                f"<button class=\"week-toggle-btn-{stat_type} active\" data-weeks=\"all\" onclick=\"showWeeklyChart_{stat_type}('all')\">All Weeks</button>"
+                f"<button class=\"week-toggle-btn-{stat_type}\" data-weeks=\"all\" onclick=\"showWeeklyChart_{stat_type}('all')\">All Weeks</button>"
             ]
             if len(weekly_stats) > 12:
                 buttons.append(
-                    f"<button class=\"week-toggle-btn-{stat_type}\" data-weeks=\"12\" onclick=\"showWeeklyChart_{stat_type}('12')\">Last 12 Weeks</button>"
+                    f"<button class=\"week-toggle-btn-{stat_type} active\" data-weeks=\"12\" onclick=\"showWeeklyChart_{stat_type}('12')\">Last 12 Weeks</button>"
                 )
             if len(weekly_stats) > 8:
                 buttons.append(

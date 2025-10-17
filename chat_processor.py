@@ -11,6 +11,10 @@ import pytz
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional, Any
 import logging
+from pandas.api.types import (
+    is_datetime64_any_dtype,
+    is_datetime64tz_dtype,
+)
 
 try:
     import plotly.graph_objects as go
@@ -30,7 +34,8 @@ class ChatDataProcessor:
         
         # Define known bots and human agents
         self.bots = ['Wynn AI', 'Sales Agent', 'Traject Data Live Chat', 'Traject Data Customer Support', 'Agent Scrape', 'ChatBot', 'Customer Support TEST Bot']
-        self.human_agents = ['Shan', 'Girly', 'Chris', 'Nora', 'Gillie', 'Bill jones', 'Bhushan', 'Francis', 'Nova', 'Richie Waugh', 'Spencer Dupee']
+        # Only support team members (exclude managers, other departments)
+        self.human_agents = ['Shan', 'Girly', 'Chris', 'Nora', 'Gillie', 'Bhushan', 'Francis', 'Nova']
         
         # Human agent name mapping (pseudonym → real name)
         self.human_agent_mapping = {
@@ -95,20 +100,77 @@ class ChatDataProcessor:
         # Detect and normalize column names
         self._normalize_columns()
         
-        # Convert date columns to datetime (handle "Unknown" values with errors='coerce')
-        self.df['chat_creation_date'] = pd.to_datetime(self.df['chat_creation_date_raw'], errors='coerce')
-        self.df['chat_start_date'] = pd.to_datetime(self.df['chat_start_date_raw'], errors='coerce')
-        
-        # Convert to Atlantic timezone
         atlantic = pytz.timezone("Canada/Atlantic")
-        
-        # Handle timezone conversion based on detected source timezone
-        if hasattr(self, 'source_timezone') and self.source_timezone == 'America/Moncton':
-            # Data is already in Atlantic time zone (Moncton), just localize
-            self.df['chat_creation_date_adt'] = self.df['chat_creation_date'].dt.tz_localize(atlantic, ambiguous=False, nonexistent='shift_forward')
+
+        creation_candidates = [
+            ('chat_creation_date_raw', False),
+            ('chat_creation_date_utc', True),
+            ('chat_created_at_iso', True),
+            ('chat_creation_date', False),
+        ]
+
+        creation_series_list = []
+        for column, assume_utc in creation_candidates:
+            if column not in self.df.columns:
+                continue
+            parsed = pd.to_datetime(self.df[column], errors='coerce', utc=assume_utc)
+            if not parsed.notna().any():
+                continue
+
+            if is_datetime64tz_dtype(parsed):
+                normalized = parsed
+            elif is_datetime64_any_dtype(parsed):
+                normalized = parsed.dt.tz_localize(pytz.UTC)
+            else:
+                continue
+
+            creation_series_list.append(normalized)
+
+        if creation_series_list:
+            creation_utc = creation_series_list[0]
+            for series in creation_series_list[1:]:
+                creation_utc = creation_utc.combine_first(series)
         else:
-            # Data is in UTC, convert to Atlantic
-            self.df['chat_creation_date_adt'] = self.df['chat_creation_date'].dt.tz_localize('UTC').dt.tz_convert(atlantic)
+            creation_utc = pd.Series(pd.NaT, index=self.df.index, dtype='datetime64[ns]')
+            creation_utc = creation_utc.dt.tz_localize(pytz.UTC)
+
+        self.df['chat_created_at_utc'] = creation_utc
+        self.df['chat_created_at_iso'] = creation_utc.dt.strftime('%Y-%m-%dT%H:%M:%SZ')
+        self.df['chat_creation_date_adt'] = creation_utc.dt.tz_convert(atlantic)
+
+        start_candidates = [
+            ('chat_start_date_raw', False),
+            ('chat_start_date', False),
+        ]
+
+        start_series_list = []
+        for column, assume_utc in start_candidates:
+            if column not in self.df.columns:
+                continue
+            parsed = pd.to_datetime(self.df[column], errors='coerce', utc=assume_utc)
+            if not parsed.notna().any():
+                continue
+
+            if is_datetime64tz_dtype(parsed):
+                normalized = parsed
+            elif is_datetime64_any_dtype(parsed):
+                normalized = parsed.dt.tz_localize(pytz.UTC)
+            else:
+                continue
+
+            start_series_list.append(normalized)
+
+        if start_series_list:
+            start_utc = start_series_list[0]
+            for series in start_series_list[1:]:
+                start_utc = start_utc.combine_first(series)
+        else:
+            start_utc = pd.Series(pd.NaT, index=self.df.index, dtype='datetime64[ns]')
+            start_utc = start_utc.dt.tz_localize(pytz.UTC)
+
+        self.df['chat_start_date'] = start_utc.dt.tz_convert(atlantic)
+        self.df['chat_started_at_utc'] = start_utc
+        self.df['chat_started_at_iso'] = start_utc.dt.strftime('%Y-%m-%dT%H:%M:%SZ')
         
         # Extract date components for grouping
         self.df['date'] = self.df['chat_creation_date_adt'].dt.date
@@ -126,8 +188,10 @@ class ChatDataProcessor:
         self.df['agent_type'] = self.df['primary_agent'].apply(self._classify_agent)
         
         # Process satisfaction ratings
-        self.df['has_rating'] = ~self.df['rate_raw'].isin(['not rated', '', None]).fillna(True)
+        # First normalize the rating values
         self.df['rating_value'] = self.df['rate_raw'].apply(self._normalize_rating)
+        # Then set has_rating based on whether we got a valid rating value
+        self.df['has_rating'] = self.df['rating_value'].notna()
         
         # Identify transfers from bot to human
         self.df['bot_transfer'] = (
@@ -143,6 +207,27 @@ class ChatDataProcessor:
         # Response time metrics
         self.df['first_response_time'] = pd.to_numeric(self.df['first_response_raw'], errors='coerce').fillna(0)
         self.df['avg_response_time'] = pd.to_numeric(self.df['avg_response_raw'], errors='coerce').fillna(0)
+
+        # Canonical UTC timestamps for downstream consumers
+        if 'chat_creation_date_adt' in self.df.columns and pd.api.types.is_datetime64_any_dtype(self.df['chat_creation_date_adt']):
+            utc_series = self.df['chat_creation_date_adt'].dt.tz_convert(pytz.UTC)
+            self.df['chat_created_at_utc'] = utc_series
+            self.df['chat_created_at_iso'] = utc_series.dt.strftime('%Y-%m-%dT%H:%M:%SZ')
+        elif 'chat_creation_date' in self.df.columns:
+            creation_series = pd.to_datetime(self.df['chat_creation_date'], errors='coerce')
+            if pd.api.types.is_datetime64_any_dtype(creation_series):
+                if creation_series.dt.tz is None:
+                    creation_series = creation_series.dt.tz_localize(pytz.UTC)
+                else:
+                    creation_series = creation_series.dt.tz_convert(pytz.UTC)
+                self.df['chat_created_at_utc'] = creation_series
+                self.df['chat_created_at_iso'] = creation_series.dt.strftime('%Y-%m-%dT%H:%M:%SZ')
+
+        self.df['chat_created_at_utc'] = self.df['chat_created_at_utc'].dt.tz_convert(pytz.UTC)
+        self.df['chat_creation_date_adt'] = self.df['chat_creation_date_adt'].dt.tz_convert(atlantic)
+        self.df['chat_start_date'] = self.df['chat_start_date'].dt.tz_convert(atlantic)
+        self.df['chat_started_at_utc'] = self.df['chat_started_at_utc'].dt.tz_convert(pytz.UTC)
+        self.df['chat_started_at_iso'] = self.df['chat_started_at_utc'].dt.strftime('%Y-%m-%dT%H:%M:%SZ')
         
         self.logger.info("Data processing completed")
     
@@ -151,18 +236,31 @@ class ChatDataProcessor:
         columns = self.df.columns.tolist()
         
         # Find date columns with flexible matching (new format is primary)
+        # Support both America/Moncton and America/Halifax (same timezone)
         date_patterns = [
-            ('chat_creation_date_raw', ['chat creation date America/Moncton', 'chat creation date UTC']),
-            ('chat_start_date_raw', ['chat start date America/Moncton', 'chat start date UTC']),
-            ('primary_agent_raw', ['operator 1 nick']),
-            ('secondary_agent_raw', ['operator 2 nick']),
-            ('rate_raw', ['rate']),
-            ('duration_raw', ['chat duration in seconds']),
-            ('first_response_raw', ['first response time']),
-            ('avg_response_raw', ['average response time']),
-            ('country_raw', ['visitor country code']),
-            ('tag1_raw', ['tag 1']),
-            ('tag2_raw', ['tag 2'])
+            ('chat_creation_date_raw', [
+                'chat creation date America/Moncton',
+                'chat creation date America/Halifax',
+                'chat creation date UTC',
+                'chat_creation_date_adt',
+                'chat_creation_date_utc',
+                'chat_creation_date'
+            ]),
+            ('chat_start_date_raw', [
+                'chat start date America/Moncton',
+                'chat start date America/Halifax',
+                'chat start date UTC',
+                'chat_start_date'
+            ]),
+            ('primary_agent_raw', ['operator 1 nick', 'primary_agent']),
+            ('secondary_agent_raw', ['operator 2 nick', 'secondary_agent', 'human_agents']),
+            ('rate_raw', ['rate', 'rating_value']),
+            ('duration_raw', ['chat duration in seconds', 'duration_seconds', 'duration_minutes']),
+            ('first_response_raw', ['first response time', 'first_response_time']),
+            ('avg_response_raw', ['average response time', 'avg_response_time']),
+            ('country_raw', ['visitor country code', 'country']),
+            ('tag1_raw', ['tag 1', 'tag1', 'tags']),
+            ('tag2_raw', ['tag 2', 'tag2'])
         ]
         
         # Map columns
@@ -170,7 +268,11 @@ class ChatDataProcessor:
             found = False
             for pattern in patterns:
                 if pattern in columns:
-                    self.df[target] = self.df[pattern]
+                    if target == 'duration_raw' and pattern == 'duration_minutes':
+                        # Convert minutes to seconds for downstream expectations
+                        self.df[target] = pd.to_numeric(self.df[pattern], errors='coerce') * 60
+                    else:
+                        self.df[target] = self.df[pattern]
                     found = True
                     break
             if not found:
@@ -178,9 +280,14 @@ class ChatDataProcessor:
                 self.df[target] = None
         
         # Detect timezone from column name
-        if 'chat creation date America/Moncton' in columns:
+        # Both America/Moncton and America/Halifax use Atlantic timezone
+        if 'chat creation date America/Moncton' in columns or 'chat creation date America/Halifax' in columns:
+            self.source_timezone = 'America/Moncton'  # Use Moncton (same as Halifax)
+            detected_tz = 'America/Moncton' if 'chat creation date America/Moncton' in columns else 'America/Halifax'
+            self.logger.info(f"Detected source timezone: {detected_tz} (Atlantic)")
+        elif 'chat_creation_date_adt' in columns:
             self.source_timezone = 'America/Moncton'
-            self.logger.info("Detected source timezone: America/Moncton")
+            self.logger.info("Detected source timezone: Atlantic (pre-normalized)")
         else:
             self.source_timezone = 'UTC'
             self.logger.info("Detected source timezone: UTC")
@@ -206,16 +313,42 @@ class ChatDataProcessor:
         else:
             return agent_name
     
-    def _normalize_rating(self, rating: str) -> Optional[int]:
-        """Convert rating text to numeric value (1=bad, 5=good)"""
-        if pd.isna(rating) or rating == 'not rated':
+    def _normalize_rating(self, rating: Any) -> Optional[float]:
+        """
+        Convert rating to numeric value (1-5 scale)
+        
+        Handles both:
+        - Text ratings: "good", "bad", "not rated"
+        - Numeric ratings: 1-5 from LiveChat API
+        """
+        if pd.isna(rating) or rating == 'not rated' or rating == '':
             return None
-        elif 'bad' in rating.lower():
-            return 1
-        elif 'good' in rating.lower():
-            return 5
-        else:
-            return None
+        
+        # Handle numeric ratings (from LiveChat API)
+        if isinstance(rating, (int, float)):
+            # Validate range (1-5)
+            if 1 <= rating <= 5:
+                return float(rating)
+            else:
+                return None
+        
+        # Handle string ratings (from CSV exports)
+        if isinstance(rating, str):
+            rating_lower = rating.lower().strip()
+            if 'bad' in rating_lower:
+                return 1.0
+            elif 'good' in rating_lower:
+                return 5.0
+            else:
+                # Try to parse as number
+                try:
+                    numeric_val = float(rating)
+                    if 1 <= numeric_val <= 5:
+                        return numeric_val
+                except (ValueError, TypeError):
+                    pass
+        
+        return None
     
     def filter_date_range(self, start_date: Optional[datetime], end_date: Optional[datetime]) -> Tuple[pd.DataFrame, int, int]:
         """Filter data by date range"""
@@ -240,11 +373,34 @@ class ChatDataProcessor:
             adt_tz = pytz.timezone('Canada/Atlantic')
             end_date = adt_tz.localize(end_date)
 
-        if start_date:
-            filtered_df = filtered_df[filtered_df['chat_creation_date_adt'] >= start_date]
+        if 'chat_created_at_utc' in filtered_df.columns:
+            series = pd.to_datetime(filtered_df['chat_created_at_utc'], errors='coerce', utc=True)
+        else:
+            series = filtered_df['chat_creation_date_adt']
+            if series.dt.tz is None:
+                adt_tz = pytz.timezone('Canada/Atlantic')
+                series = series.dt.tz_localize(adt_tz, ambiguous=False, nonexistent='shift_forward')
+            series = series.dt.tz_convert(pytz.UTC)
 
-        if end_date:
-            filtered_df = filtered_df[filtered_df['chat_creation_date_adt'] <= end_date]
+        def _as_utc(dt: datetime) -> Optional[datetime]:
+            if dt is None:
+                return None
+            if dt.tzinfo is None:
+                return pytz.UTC.localize(dt)
+            return dt.astimezone(pytz.UTC)
+
+        start_utc = _as_utc(start_date)
+        end_utc = _as_utc(end_date)
+
+        if start_utc:
+            mask = series >= start_utc
+            filtered_df = filtered_df[mask]
+            series = series[mask]
+
+        if end_utc:
+            mask = series <= end_utc
+            filtered_df = filtered_df[mask]
+            series = series[mask]
 
         filtered_count = len(filtered_df)
 
@@ -344,19 +500,28 @@ class ChatDataProcessor:
     def _calculate_volume_trends(self, df: pd.DataFrame) -> Dict[str, Any]:
         """Calculate volume trends"""
         if len(df) < 2:
-            return {'trend': 'insufficient_data'}
+            return {'trend': 'insufficient_data', 'trend_slope': 0, 'trend_direction': 'stable', 'growth_rate': 0}
         
         daily_volume = df.groupby('date').size()
+        
+        # Check if we have enough data points
+        if len(daily_volume) == 0:
+            return {'trend': 'no_data', 'trend_slope': 0, 'trend_direction': 'stable', 'growth_rate': 0}
         
         # Simple linear trend calculation
         x = np.arange(len(daily_volume))
         y = daily_volume.values
         trend_slope = np.polyfit(x, y, 1)[0] if len(x) > 1 else 0
         
+        # Calculate growth rate safely
+        growth_rate = 0
+        if len(daily_volume) > 1 and daily_volume.iloc[0] > 0:
+            growth_rate = (daily_volume.iloc[-1] - daily_volume.iloc[0]) / daily_volume.iloc[0] * 100
+        
         return {
             'trend_slope': trend_slope,
             'trend_direction': 'increasing' if trend_slope > 0 else 'decreasing' if trend_slope < 0 else 'stable',
-            'growth_rate': (daily_volume.iloc[-1] - daily_volume.iloc[0]) / daily_volume.iloc[0] * 100 if daily_volume.iloc[0] > 0 else 0
+            'growth_rate': growth_rate
         }
     
     def _calculate_bot_metrics(self, df: pd.DataFrame) -> Dict[str, Any]:
@@ -496,8 +661,8 @@ class ChatDataProcessor:
         # Daily transfer rates
         daily_transfers = df.groupby('date').agg({
             'bot_transfer': 'sum',
-            'chat_creation_date': 'count'
-        }).rename(columns={'chat_creation_date': 'total_chats'})
+            'chat_id': 'count'
+        }).rename(columns={'chat_id': 'total_chats'})
         daily_transfers['transfer_rate'] = daily_transfers['bot_transfer'] / daily_transfers['total_chats'] * 100
         daily_transfers['date_str'] = daily_transfers.index.astype(str)
         
@@ -521,11 +686,17 @@ class ChatDataProcessor:
     
     def _calculate_geographic_metrics(self, df: pd.DataFrame) -> Dict[str, Any]:
         """Calculate geographic distribution metrics"""
-        country_dist = df['visitor country code'].value_counts().head(10)
+        # Use normalized column name (country_raw instead of 'visitor country code')
+        country_col = 'country_raw' if 'country_raw' in df.columns else 'visitor country code'
+        
+        if country_col not in df.columns:
+            return {'top_countries': {}, 'total_countries': 0, 'top_country': None}
+        
+        country_dist = df[country_col].value_counts().head(10)
         
         return {
             'top_countries': country_dist.to_dict(),
-            'total_countries': df['visitor country code'].nunique(),
+            'total_countries': df[country_col].nunique(),
             'top_country': country_dist.index[0] if len(country_dist) > 0 else None
         }
     

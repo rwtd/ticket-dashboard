@@ -37,6 +37,29 @@ from google_sheets_exporter import GoogleSheetsExporter
 logger = logging.getLogger(__name__)
 
 
+def _ensure_utc_columns(df: pd.DataFrame, src_col: str, base_name: str) -> pd.DataFrame:
+    """
+    Create canonical UTC datetime columns from a timezone-aware source column.
+
+    Adds two columns:
+        <base_name>_utc  (datetime64[ns, UTC])
+        <base_name>_iso  (str, ISO-8601 Z format)
+    """
+    if src_col not in df.columns:
+        return df
+
+    series = pd.to_datetime(df[src_col], errors='coerce', utc=False)
+    if series.dt.tz is None:
+        # Assume values are naive but represent ADT (Atlantic) as per existing pipeline
+        atlantic = pytz.timezone('Canada/Atlantic')
+        series = series.dt.tz_localize(atlantic, ambiguous=False, nonexistent='shift_forward')
+
+    utc_series = series.dt.tz_convert(pytz.UTC)
+    df[f"{base_name}_utc"] = utc_series
+    df[f"{base_name}_iso"] = utc_series.dt.strftime('%Y-%m-%dT%H:%M:%SZ')
+    return df
+
+
 class DataSyncService:
     """
     Orchestrates automated data fetching and syncing to Google Sheets
@@ -209,6 +232,14 @@ class DataSyncService:
             logger.info(f"✅ Processed {len(df_final)} tickets")
             logger.info(f"📊 Columns: {list(df_final.columns)}")
 
+            # Normalize canonical UTC columns for downstream consumers
+            if 'Create date' in df_final.columns:
+                df_final = _ensure_utc_columns(df_final, 'Create date', 'ticket_created_at')
+            if 'Last Modified Date' in df_final.columns:
+                df_final = _ensure_utc_columns(df_final, 'Last Modified Date', 'ticket_last_modified')
+            if 'Close date' in df_final.columns:
+                df_final = _ensure_utc_columns(df_final, 'Close date', 'ticket_closed_at')
+
             # Update sync state
             state['last_ticket_sync'] = datetime.now(pytz.UTC)
             self.save_sync_state(state)
@@ -268,6 +299,16 @@ class DataSyncService:
 
             logger.info(f"✅ Processed {len(df_final)} chats")
             logger.info(f"📊 Columns: {list(df_final.columns)}")
+
+            # Normalize timestamps to canonical UTC fields
+            if 'chat_creation_date_adt' in df_final.columns:
+                df_final = _ensure_utc_columns(df_final, 'chat_creation_date_adt', 'chat_created_at')
+            elif 'chat_creation_date_utc' in df_final.columns:
+                df_final['chat_created_at_utc'] = pd.to_datetime(df_final['chat_creation_date_utc'], errors='coerce', utc=True)
+                df_final['chat_created_at_iso'] = df_final['chat_created_at_utc'].dt.strftime('%Y-%m-%dT%H:%M:%SZ')
+
+            if 'chat_start_date_adt' in df_final.columns:
+                df_final = _ensure_utc_columns(df_final, 'chat_start_date_adt', 'chat_started_at')
 
             # Update sync state
             state['last_chat_sync'] = datetime.now(pytz.UTC)

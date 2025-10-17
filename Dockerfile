@@ -33,16 +33,17 @@ COPY requirements.txt ./
 RUN pip install --no-cache-dir --upgrade pip==24.3 && \
     pip install --no-cache-dir --only-binary=all -r requirements.txt
 
-# Runtime stage - minimal final image
+# Single stage build for simplicity and reliability
 FROM python:3.12-slim-bookworm
 
-# Add security updates and minimal runtime dependencies
+# Add security updates and runtime dependencies
 RUN apt-get update && apt-get upgrade -y && \
     apt-get install -y --no-install-recommends \
-        curl && \
+        curl \
+        build-essential \
+        git && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* && \
-    # Remove package manager cache to reduce image size
     rm -rf /var/cache/apt/*
 
 # Create non-root user with specific UID for consistency
@@ -51,19 +52,23 @@ RUN groupadd -r appuser -g 10001 && \
     mkdir -p /app && \
     chown -R appuser:appuser /app /home/appuser
 
-# Environment variables (inherited from builder)
+# Environment variables
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PORT=8080 \
     PATH="/home/appuser/.local/bin:${PATH}"
 
 # Set the working directory
 WORKDIR /app
 
-# Copy installed packages from builder stage
-COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
-COPY --from=builder /usr/local/bin /usr/local/bin
+# Copy requirements first for better layer caching
+COPY requirements.txt ./
+
+# Install Python dependencies
+RUN pip install --no-cache-dir --upgrade pip==24.3 && \
+    pip install --no-cache-dir --only-binary=all -r requirements.txt
 
 # Copy application source with proper ownership
 COPY --chown=appuser:appuser . .
@@ -81,7 +86,7 @@ EXPOSE 8080
 # Start with gunicorn, binding to $PORT (fallback 8080) on 0.0.0.0
 # JSON-array form with sh -c to expand environment variable safely
 # Added security flags and worker configuration
-CMD ["sh", "-c", "exec gunicorn \
+CMD ["sh", "-c", "cd /app && python -c 'import app; print(\"App imported successfully\")' && exec gunicorn \
     --bind 0.0.0.0:${PORT:-8080} \
     --workers 2 \
     --worker-class sync \

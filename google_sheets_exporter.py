@@ -7,7 +7,9 @@ Handles rolling 365-day data exports with upsert functionality
 import os
 import pandas as pd
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+import pytz
+from pandas.api.types import is_datetime64_any_dtype, is_datetime64tz_dtype
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any
 import time
@@ -32,6 +34,7 @@ class GoogleSheetsExporter:
         self.token_path = token_path
         self.service = None
         self.scopes = ['https://www.googleapis.com/auth/spreadsheets']
+        self.share_publicly = os.environ.get('GOOGLE_SHEETS_PUBLIC_READ', '').strip().lower() in {'1', 'true', 'yes'}
         
     def authenticate(self) -> bool:
         """Authenticate with Google Sheets API"""
@@ -135,16 +138,19 @@ class GoogleSheetsExporter:
             result = self.service.spreadsheets().create(body=spreadsheet).execute()
             spreadsheet_id = result['spreadsheetId']
             
-            # Make the sheet publicly readable (optional)
-            try:
-                from googleapiclient.discovery import build as drive_build
-                drive_service = build('drive', 'v3', credentials=self.service._http.credentials)
-                drive_service.permissions().create(
-                    fileId=spreadsheet_id,
-                    body={'role': 'reader', 'type': 'anyone'}
-                ).execute()
-            except Exception:
-                pass  # Permission setting failed, but sheet was created
+            if self.share_publicly:
+                try:
+                    from googleapiclient.discovery import build as drive_build
+                    drive_service = build('drive', 'v3', credentials=self.service._http.credentials)
+                    drive_service.permissions().create(
+                        fileId=spreadsheet_id,
+                        body={'role': 'reader', 'type': 'anyone'}
+                    ).execute()
+                    logger.info("Spreadsheet shared publicly (GOOGLE_SHEETS_PUBLIC_READ enabled)")
+                except Exception as exc:
+                    logger.warning(f"Failed to set public share permissions: {exc}")
+            else:
+                logger.info("Spreadsheet created without public sharing (set GOOGLE_SHEETS_PUBLIC_READ=1 to enable)")
                 
             logger.info(f"✅ Created Google Sheet: {title} (ID: {spreadsheet_id})")
             return spreadsheet_id
@@ -155,17 +161,29 @@ class GoogleSheetsExporter:
     
     def get_rolling_window_data(self, df: pd.DataFrame, days: int = 365) -> pd.DataFrame:
         """Get data for rolling window (default 365 days)"""
-        cutoff_date = datetime.now() - timedelta(days=days)
-        
-        # Ensure Create date is datetime
-        if 'Create date' in df.columns:
-            df['Create date'] = pd.to_datetime(df['Create date'], errors='coerce', utc=True)
-            
-            # Make cutoff_date timezone aware to match
-            import pytz
-            cutoff_date = pytz.UTC.localize(cutoff_date)
-            
-            return df[df['Create date'] >= cutoff_date].copy()
+        cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
+
+        timestamp_candidates = [
+            'ticket_created_at_utc',
+            'chat_created_at_utc',
+            'Create date',
+            'chat_creation_date_utc',
+        ]
+
+        for column_name in timestamp_candidates:
+            if column_name not in df.columns:
+                continue
+
+            series = pd.to_datetime(df[column_name], errors='coerce', utc=True)
+            if series.dt.tz is None:
+                series = series.dt.tz_localize(timezone.utc)
+            else:
+                series = series.dt.tz_convert(timezone.utc)
+
+            df[column_name] = series
+            filtered = df[series >= cutoff_date].copy()
+            return filtered
+
         return df
     
     def prepare_data_for_sheets(self, df: pd.DataFrame, data_type: str) -> List[List]:
@@ -227,30 +245,64 @@ class GoogleSheetsExporter:
     
     def _add_ticket_calculated_fields(self, df: pd.DataFrame) -> pd.DataFrame:
         """Add calculated fields specific to ticket data"""
-        import pytz
+        eastern = pytz.timezone("US/Eastern")
+        utc = pytz.UTC
+
+        def _canonical_timestamp() -> pd.Series:
+            candidates = [
+                ('ticket_created_at_utc', True),
+                ('Create date', False),
+                ('created_at', True),
+            ]
+            out = pd.Series(pd.NaT, index=df.index, dtype='datetime64[ns]')
+            for column, is_utc in candidates:
+                if column not in df.columns:
+                    continue
+                parsed = pd.to_datetime(df[column], errors='coerce', utc=is_utc)
+                if not parsed.notna().any():
+                    continue
+                if is_datetime64tz_dtype(parsed):
+                    normalized = parsed
+                elif is_datetime64_any_dtype(parsed):
+                    normalized = parsed.dt.tz_localize(pytz.UTC)
+                else:
+                    continue
+                normalized = normalized.dt.tz_convert(utc)
+                out = normalized.combine_first(out)
+            if not is_datetime64tz_dtype(out):
+                out = out.dt.tz_localize(pytz.UTC)
+            return out
+
+        created_utc = _canonical_timestamp()
+        if 'ticket_created_at_utc' not in df.columns:
+            df['ticket_created_at_utc'] = created_utc
+        else:
+            df['ticket_created_at_utc'] = created_utc.combine_first(
+                pd.to_datetime(df['ticket_created_at_utc'], errors='coerce', utc=True)
+            )
+
+        df['ticket_created_at_iso'] = df['ticket_created_at_utc'].dt.strftime('%Y-%m-%dT%H:%M:%SZ')
+
+        local_create = df['ticket_created_at_utc'].dt.tz_convert(eastern)
+        df['Create date'] = local_create
+
+        if 'Last Modified Date' in df.columns:
+            df['Last Modified Date'] = pd.to_datetime(df['Last Modified Date'], errors='coerce', utc=True).dt.tz_convert(eastern)
+        if 'Close date' in df.columns:
+            df['Close date'] = pd.to_datetime(df['Close date'], errors='coerce', utc=True).dt.tz_convert(eastern)
         
-        # Ensure Create date is properly formatted
-        if 'Create date' in df.columns:
-            df['Create date'] = pd.to_datetime(df['Create date'], errors='coerce')
-            
-            # Add day of week (Monday=1, Sunday=7)
-            df['Day_of_Week_Number'] = df['Create date'].dt.dayofweek + 1  # pandas uses 0=Monday
+        if df['Create date'].notna().any():
+            df['Day_of_Week_Number'] = df['Create date'].dt.dayofweek + 1
             df['Day_of_Week_Name'] = df['Create date'].dt.day_name()
-            
-            # Add weekend/weekday boolean (Saturday=6, Sunday=0 in pandas dayofweek)
-            df['Is_Weekend'] = df['Create date'].dt.dayofweek.isin([5, 6])  # Saturday, Sunday
+            df['Is_Weekend'] = df['Create date'].dt.dayofweek.isin([5, 6])
             df['Is_Weekday'] = ~df['Is_Weekend']
-            
-            # Add fiscal year quarter (calendar aligned)
             df['FY_Quarter'] = df['Create date'].dt.quarter
             df['FY_Quarter_Name'] = 'Q' + df['FY_Quarter'].astype(str)
             df['FY_Year'] = df['Create date'].dt.year
             df['FY_Quarter_Full'] = df['FY_Year'].astype(str) + '-' + df['FY_Quarter_Name']
-            
-            # Add month name for additional granularity
             df['Month_Number'] = df['Create date'].dt.month
             df['Month_Name'] = df['Create date'].dt.month_name()
-            df['Month_Year'] = df['Create date'].dt.strftime('%Y-%m (%B)')  # 2025-01 (January)
+            df['Month_Year'] = df['Create date'].dt.strftime('%Y-%m (%B)')
         
         # Add response time calculations if not already present
         if 'First Response Time (Hours)' not in df.columns and 'First agent email response date' in df.columns:
@@ -271,8 +323,8 @@ class GoogleSheetsExporter:
         
         # Add ticket age in days
         if 'Create date' in df.columns:
-            now = datetime.now(pytz.UTC)
-            df['Ticket_Age_Days'] = (now - df['Create date']).dt.total_seconds() / (24 * 3600)
+            now = datetime.now(utc)
+            df['Ticket_Age_Days'] = (now - df['Create date'].dt.tz_convert(utc)).dt.total_seconds() / (24 * 3600)
             df['Ticket_Age_Days'] = df['Ticket_Age_Days'].round(1)
         
         # Add QA scoring fields (empty initially - to be populated from separate QA sheet)
@@ -477,8 +529,11 @@ class GoogleSheetsExporter:
                 spreadsheetId=spreadsheet_id,
                 range=f"{sheet_name}!A:C"  # Get first 3 columns to find ID and headers
             ).execute()
+            if result is None:
+                logger.warning(f"Received empty response when reading {sheet_name} sheet")
+                return {}
             
-            values = result.get('values', [])
+            values = result.get('values', []) if isinstance(result, dict) else []
             if not values:
                 return {}
             
@@ -579,7 +634,8 @@ class GoogleSheetsExporter:
                         spreadsheetId=spreadsheet_id,
                         range=f"{sheet_name}!A:A"
                     ).execute()
-                    last_row = len(result.get('values', [])) + 1
+                    values = result.get('values', []) if isinstance(result, dict) else []
+                    last_row = len(values) + 1
                 except:
                     last_row = len(existing_data) + 2  # Header + existing data + 1
                 
@@ -884,8 +940,7 @@ class GoogleSheetsExporter:
                     spreadsheetId=spreadsheet_id,
                     range="Sync_Log!A1:O1"
                 ).execute()
-                
-                existing_headers = result.get('values', [])
+                existing_headers = result.get('values', []) if isinstance(result, dict) else []
                 if not existing_headers:
                     # Add headers
                     self.service.spreadsheets().values().update(
@@ -904,7 +959,8 @@ class GoogleSheetsExporter:
                     spreadsheetId=spreadsheet_id,
                     range="Sync_Log!A:A"
                 ).execute()
-                last_row = len(result.get('values', [])) + 1
+                values = result.get('values', []) if isinstance(result, dict) else []
+                last_row = len(values) + 1
             except:
                 last_row = 2  # Start after headers
             
@@ -925,6 +981,10 @@ class GoogleSheetsExporter:
     
     def log_dashboard_metrics(self, spreadsheet_id: str, metrics_data: Dict) -> bool:
         """Log high-level dashboard metrics to Dashboard_Metrics sheet"""
+        if not metrics_data:
+            logger.warning("No dashboard metrics supplied; skipping Dashboard_Metrics update")
+            return False
+
         try:
             # Prepare dashboard metrics headers
             metrics_headers = [
@@ -1014,8 +1074,7 @@ class GoogleSheetsExporter:
                     spreadsheetId=spreadsheet_id,
                     range="Dashboard_Metrics!A1:AZ1"
                 ).execute()
-                
-                existing_headers = result.get('values', [])
+                existing_headers = result.get('values', []) if isinstance(result, dict) else []
                 if not existing_headers:
                     # Add headers
                     self.service.spreadsheets().values().update(
@@ -1034,7 +1093,8 @@ class GoogleSheetsExporter:
                     spreadsheetId=spreadsheet_id,
                     range="Dashboard_Metrics!A:A"
                 ).execute()
-                last_row = len(result.get('values', [])) + 1
+                values = result.get('values', []) if isinstance(result, dict) else []
+                last_row = len(values) + 1
             except:
                 last_row = 2  # Start after headers
             

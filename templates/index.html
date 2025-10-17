@@ -703,6 +703,43 @@
                 </div>
             </div>
 
+            <!-- File Selection Section (for CSV mode) -->
+            <div class="section" id="ticket-files" class="hidden">
+                <h2>📋 Select Ticket Files</h2>
+                {% if ticket_files and ticket_files|length > 0 %}
+                    <div class="checkbox-group">
+                        {% for file in ticket_files %}
+                        <div class="checkbox-item">
+                            <input type="checkbox" name="ticketFiles" value="{{ file.name }}" id="ticket-{{ loop.index }}">
+                            <label for="ticket-{{ loop.index }}" style="color: #e0e0e0;">
+                                {{ file.name }} ({{ "%.1f"|format(file.size/1024) }} KB)
+                            </label>
+                        </div>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <p style="color: #e0e0e0;">No ticket files found. Upload files in the Admin Panel or use Google Sheets.</p>
+                {% endif %}
+            </div>
+
+            <div class="section" id="chat-files" class="hidden">
+                <h2>💬 Select Chat Files</h2>
+                {% if chat_files and chat_files|length > 0 %}
+                    <div class="checkbox-group">
+                        {% for file in chat_files %}
+                        <div class="checkbox-item">
+                            <input type="checkbox" name="chatFiles" value="{{ file.name }}" id="chat-{{ loop.index }}">
+                            <label for="chat-{{ loop.index }}" style="color: #e0e0e0;">
+                                {{ file.name }} ({{ "%.1f"|format(file.size/1024) }} KB)
+                            </label>
+                        </div>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <p style="color: #e0e0e0;">No chat files found. Upload files in the Admin Panel or use Google Sheets.</p>
+                {% endif %}
+            </div>
+
             <!-- Date Range Selection -->
             <div class="section">
                 <h2>📅 Date Range Selection</h2>
@@ -1123,13 +1160,17 @@
             const dateRangeSection = document.querySelector('.section h2').parentElement;
             const aiSection = document.getElementById('ai-assistant-section');
             
+            // Check data source preference - only show file selection if using CSV mode
+            const preferredDataSource = localStorage.getItem('preferredDataSource');
+            const showFileSelection = (preferredDataSource === 'csv');
+            
             // Hide all file sections and AI section first
-            ticketFiles.classList.add('hidden');
-            chatFiles.classList.add('hidden');
+            if (ticketFiles) ticketFiles.classList.add('hidden');
+            if (chatFiles) chatFiles.classList.add('hidden');
             if (aiSection) aiSection.style.display = 'none';
             
             if (analyticsType === 'tickets') {
-                ticketFiles.classList.remove('hidden');
+                if (showFileSelection && ticketFiles) ticketFiles.classList.remove('hidden');
                 performancePeriodSection.style.display = 'none';
                 // Show date range for tickets
                 Array.from(document.querySelectorAll('.section')).forEach(section => {
@@ -1138,7 +1179,7 @@
                     }
                 });
             } else if (analyticsType === 'chats') {
-                chatFiles.classList.remove('hidden');
+                if (showFileSelection && chatFiles) chatFiles.classList.remove('hidden');
                 performancePeriodSection.style.display = 'none';
                 // Show date range for chats
                 Array.from(document.querySelectorAll('.section')).forEach(section => {
@@ -1147,7 +1188,7 @@
                     }
                 });
             } else if (analyticsType === 'agent_performance') {
-                ticketFiles.classList.remove('hidden'); // Agent performance uses ticket data
+                if (showFileSelection && ticketFiles) ticketFiles.classList.remove('hidden'); // Agent performance uses ticket data
                 performancePeriodSection.style.display = 'block';
                 agentSelectionSection.style.display = 'none';
                 // Hide date range section for agent performance
@@ -1158,8 +1199,8 @@
                 });
             } else if (analyticsType === 'combined') {
                 // Show both ticket and chat file sections
-                ticketFiles.classList.remove('hidden');
-                chatFiles.classList.remove('hidden');
+                if (showFileSelection && ticketFiles) ticketFiles.classList.remove('hidden');
+                if (showFileSelection && chatFiles) chatFiles.classList.remove('hidden');
                 performancePeriodSection.style.display = 'none';
                 agentSelectionSection.style.display = 'none';
                 // Show date range for combined analytics
@@ -1169,7 +1210,7 @@
                     }
                 });
             } else if (analyticsType === 'individual_agent') {
-                ticketFiles.classList.remove('hidden'); // Individual agent uses ticket data
+                if (showFileSelection && ticketFiles) ticketFiles.classList.remove('hidden'); // Individual agent uses ticket data
                 performancePeriodSection.style.display = 'none';
                 agentSelectionSection.style.display = 'block';
                 // Hide date range section for individual agent
@@ -1180,8 +1221,8 @@
                 });
             } else if (analyticsType === 'ai_assistant') {
                 // For AI assistant, show both file types and hide date/period sections
-                ticketFiles.classList.remove('hidden');
-                chatFiles.classList.remove('hidden');
+                if (showFileSelection && ticketFiles) ticketFiles.classList.remove('hidden');
+                if (showFileSelection && chatFiles) chatFiles.classList.remove('hidden');
                 performancePeriodSection.style.display = 'none';
                 agentSelectionSection.style.display = 'none';
                 // Hide date range section for AI assistant
@@ -1286,7 +1327,9 @@
             }
             
             const dateType = document.querySelector('input[name="dateType"]:checked').value;
-            const dataSource = 'sheets'; // Always use Google Sheets now
+            // Check data source preference from admin panel (localStorage)
+            const preferredDataSource = localStorage.getItem('preferredDataSource');
+            const dataSource = preferredDataSource === 'csv' ? 'existing' : 'sheets';
             const includeDelayed = false; // Default to false (option moved to admin)
             
             // Get selected files based on analytics type and data source
@@ -1320,10 +1363,58 @@
                     .map(cb => cb.value);
             }
             
-            // Only check for selected files if not using Google Sheets
+            // Only check for selected files if not using Google Sheets AND if file selection elements exist
             if (dataSource !== 'sheets' && selectedFiles.length === 0) {
-                showAlert('Please select at least one CSV file to analyze', 'error');
-                return;
+                // Debug logging
+                console.log('No files selected, attempting auto-selection for:', analyticsType);
+                
+                // If using CSV mode but no files selected, auto-select all available files
+                if (analyticsType === 'tickets' || analyticsType === 'agent_performance' || analyticsType === 'individual_agent') {
+                    const allTicketCheckboxes = document.querySelectorAll('input[name="ticketFiles"]');
+                    console.log(`Found ${allTicketCheckboxes.length} ticket checkboxes`);
+                    
+                    if (allTicketCheckboxes.length > 0) {
+                        // Auto-select all ticket files
+                        allTicketCheckboxes.forEach(cb => cb.checked = true);
+                        selectedFiles = Array.from(allTicketCheckboxes).map(cb => cb.value);
+                        console.log('Auto-selected ticket files:', selectedFiles);
+                    } else {
+                        showAlert('No ticket CSV files found. Please upload files in the Admin Panel or switch to Google Sheets data source.', 'error');
+                        return;
+                    }
+                } else if (analyticsType === 'chats') {
+                    const allChatCheckboxes = document.querySelectorAll('input[name="chatFiles"]');
+                    console.log(`Found ${allChatCheckboxes.length} chat checkboxes`);
+                    
+                    if (allChatCheckboxes.length > 0) {
+                        // Auto-select all chat files
+                        allChatCheckboxes.forEach(cb => cb.checked = true);
+                        selectedFiles = Array.from(allChatCheckboxes).map(cb => cb.value);
+                        console.log('Auto-selected chat files:', selectedFiles);
+                    } else {
+                        showAlert('No chat CSV files found. Please upload files in the Admin Panel or switch to Google Sheets data source.', 'error');
+                        return;
+                    }
+                } else if (analyticsType === 'combined') {
+                    const allTicketCheckboxes = document.querySelectorAll('input[name="ticketFiles"]');
+                    const allChatCheckboxes = document.querySelectorAll('input[name="chatFiles"]');
+                    if (allTicketCheckboxes.length > 0 || allChatCheckboxes.length > 0) {
+                        // Auto-select all files
+                        allTicketCheckboxes.forEach(cb => cb.checked = true);
+                        allChatCheckboxes.forEach(cb => cb.checked = true);
+                        const ticketFiles = Array.from(allTicketCheckboxes).map(cb => cb.value);
+                        const chatFiles = Array.from(allChatCheckboxes).map(cb => cb.value);
+                        selectedFiles = [...ticketFiles, ...chatFiles];
+                        window.selectedTicketFiles = ticketFiles;
+                        window.selectedChatFiles = chatFiles;
+                    } else {
+                        showAlert('No CSV files found. Please upload files in the Admin Panel or switch to Google Sheets data source.', 'error');
+                        return;
+                    }
+                } else {
+                    showAlert('Please select at least one CSV file to analyze, or switch to Google Sheets data source in the Admin Panel.', 'error');
+                    return;
+                }
             }
             
             // Prepare date parameters or performance period
@@ -1508,9 +1599,37 @@
         }
 
         // Initialize file selection on page load
-        updateFileSelection();
+        // Note: We removed updateFileSelection() because it doesn't exist anymore
         autoDetectAnalyticsType();
         updateAnalyticsType();
+        
+        // Debug: Log the data source preference
+        console.log('Data source preference:', localStorage.getItem('preferredDataSource'));
+        
+        // If CSV mode is selected, ensure file sections are visible on page load
+        const preferredDataSource = localStorage.getItem('preferredDataSource');
+        if (preferredDataSource === 'csv') {
+            console.log('CSV mode detected - ensuring file sections are visible');
+            const analyticsType = document.querySelector('input[name="analyticsType"]:checked').value;
+            const ticketFiles = document.getElementById('ticket-files');
+            const chatFiles = document.getElementById('chat-files');
+            
+            if (analyticsType === 'tickets' || analyticsType === 'agent_performance' || analyticsType === 'individual_agent') {
+                if (ticketFiles) {
+                    ticketFiles.classList.remove('hidden');
+                    console.log('Showing ticket files section');
+                }
+            } else if (analyticsType === 'chats') {
+                if (chatFiles) {
+                    chatFiles.classList.remove('hidden');
+                    console.log('Showing chat files section');
+                }
+            } else if (analyticsType === 'combined') {
+                if (ticketFiles) ticketFiles.classList.remove('hidden');
+                if (chatFiles) chatFiles.classList.remove('hidden');
+                console.log('Showing both file sections for combined analytics');
+            }
+        }
 
         // Results Browser Functions
         function toggleResultsBrowser() {

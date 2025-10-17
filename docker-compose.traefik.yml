@@ -1,0 +1,72 @@
+version: "3.9"
+
+services:
+  ticket_dashboard:
+    container_name: ticket-dashboard
+    image: ticket-dashboard:latest
+    restart: unless-stopped
+    environment:
+      - PORT=8080
+      - FLASK_ENV=production
+      - FLASK_SECRET_KEY=${FLASK_SECRET_KEY}
+      - HUBSPOT_API_KEY=${HUBSPOT_API_KEY:-}
+      - LIVECHAT_PAT=${LIVECHAT_PAT:-}
+      - GOOGLE_SHEETS_SPREADSHEET_ID=${GOOGLE_SHEETS_SPREADSHEET_ID:-}
+      - GOOGLE_SHEETS_CREDENTIALS_PATH=${GOOGLE_SHEETS_CREDENTIALS_PATH:-service_account_credentials.json}
+      - DATA_SYNC_INTERVAL_HOURS=${DATA_SYNC_INTERVAL_HOURS:-4}
+      - DATA_RETENTION_DAYS=${DATA_RETENTION_DAYS:-365}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-change-me}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      # Widget security headers
+      - WIDGETS_XFO=SAMEORIGIN
+      - "WIDGETS_FRAME_ANCESTORS='self' https://*.hubspot.com https://waugh.cloud"
+      - "WIDGETS_SCRIPT_SRC='self' 'unsafe-inline' 'unsafe-eval' https://cdn.plot.ly data: blob:"
+    volumes:
+      - ./tickets:/app/tickets
+      - ./chats:/app/chats
+      - ./uploads:/app/uploads
+      - ./results:/app/results
+      - ./config:/app/config:ro
+      - ./service_account_credentials.json:/app/service_account_credentials.json:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    labels:
+      # Enable Traefik
+      - "traefik.enable=true"
+      
+      # HTTP Router (redirects to HTTPS)
+      - "traefik.http.routers.dashboard-http.rule=Host(`dashboard.waugh.cloud`)"
+      - "traefik.http.routers.dashboard-http.entrypoints=web"
+      - "traefik.http.routers.dashboard-http.middlewares=redirect-to-https"
+      
+      # HTTPS Router
+      - "traefik.http.routers.dashboard-https.rule=Host(`dashboard.waugh.cloud`)"
+      - "traefik.http.routers.dashboard-https.entrypoints=websecure"
+      - "traefik.http.routers.dashboard-https.tls=true"
+      - "traefik.http.routers.dashboard-https.tls.certresolver=letsencrypt"
+      
+      # Service configuration
+      - "traefik.http.services.dashboard.loadbalancer.server.port=8080"
+      
+      # Redirect middleware
+      - "traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https"
+      - "traefik.http.middlewares.redirect-to-https.redirectscheme.permanent=true"
+      
+      # Security headers middleware
+      - "traefik.http.middlewares.dashboard-headers.headers.sslredirect=true"
+      - "traefik.http.middlewares.dashboard-headers.headers.stsSeconds=31536000"
+      - "traefik.http.middlewares.dashboard-headers.headers.stsIncludeSubdomains=true"
+      - "traefik.http.middlewares.dashboard-headers.headers.stsPreload=true"
+      
+      # Apply security headers
+      - "traefik.http.routers.dashboard-https.middlewares=dashboard-headers"
+    networks:
+      - traefik
+
+networks:
+  traefik:
+    external: true

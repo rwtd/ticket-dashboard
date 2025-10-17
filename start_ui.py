@@ -66,7 +66,16 @@ def main():
     # Import and run Flask app
     try:
         import os
+        import logging
         from app import app
+        
+        # Set up Firestore logging (weekly rotation)
+        try:
+            from firestore_logger import setup_firestore_logging
+            setup_firestore_logging(level=logging.INFO)
+            print("📝 Firestore logging enabled (7-day retention)")
+        except Exception as e:
+            print(f"⚠️  Firestore logging not available: {e}")
         
         # Get port from environment (Cloud Run sets PORT)
         port = int(os.environ.get('PORT', 5000))

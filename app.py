@@ -43,8 +43,12 @@ from google_sheets_exporter import GoogleSheetsExporter
 from widgets import widgets_bp
 from admin_routes import admin_bp
 
+secret_key = os.environ.get('FLASK_SECRET_KEY')
+if not secret_key:
+    raise RuntimeError("FLASK_SECRET_KEY environment variable must be set for secure sessions")
+
 app = Flask(__name__)
-app.secret_key = 'ticket-dashboard-secret-key-change-in-production'
+app.secret_key = secret_key
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
 
 # Configuration
@@ -89,6 +93,125 @@ def apply_widget_security_headers(response):
 def allowed_file(filename):
     """Check if file extension is allowed"""
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+
+def resolve_safe_csv(directory: Path, filename: str) -> Path:
+    """Return a safe CSV path within directory or raise ValueError."""
+    if not isinstance(filename, str):
+        raise ValueError("Filename must be a string")
+    if Path(filename).name != filename:
+        raise ValueError(f"Invalid path segment in filename: {filename}")
+    candidate = directory / filename
+    if candidate.suffix.lower() != '.csv':
+        raise ValueError(f"Invalid file extension: {filename}")
+    return candidate
+
+
+def resolve_safe_csv_list(directory: Path, filenames):
+    """Validate a list of CSV filenames and return their paths."""
+    safe_paths = []
+    invalid = []
+    for name in filenames:
+        try:
+            path = resolve_safe_csv(directory, name)
+        except ValueError as exc:
+            invalid.append(str(exc))
+            continue
+        if not path.exists():
+            invalid.append(f"File not found: {name}")
+            continue
+        safe_paths.append(path)
+    return safe_paths, invalid
+
+
+def sanitize_filename_list(value, list_name):
+    """Ensure incoming JSON lists contain only string filenames."""
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ValueError(f'{list_name} must be a list of filenames')
+    sanitized = []
+    invalid = []
+    for entry in value:
+        if isinstance(entry, str):
+            sanitized.append(entry)
+        else:
+            invalid.append(f"{list_name} contains non-string entry: {entry}")
+    if invalid:
+        raise ValueError('; '.join(invalid))
+    return sanitized
+
+
+def fetch_firestore_data(requested_types):
+    """Fetch requested datasets from Firestore and return temp file paths."""
+    warnings_list = []
+    tickets_path = None
+    chats_path = None
+
+    try:
+        from firestore_db import get_database
+    except Exception as exc:
+        warnings_list.append(f"Firestore integration unavailable ({exc}).")
+        return {
+            'success': False,
+            'warnings': warnings_list,
+            'tickets': None,
+            'chats': None
+        }
+
+    try:
+        db = get_database()
+    except Exception as exc:
+        warnings_list.append(f'Failed to initialize Firestore database: {exc}')
+        return {
+            'success': False,
+            'warnings': warnings_list,
+            'tickets': None,
+            'chats': None
+        }
+
+    temp_dir = Path(tempfile.mkdtemp(prefix='firestore_cache_'))
+
+    try:
+        if 'tickets' in requested_types:
+            tickets_df = db.get_tickets()
+            if tickets_df is not None and not tickets_df.empty:
+                tickets_path = temp_dir / 'firestore_tickets.csv'
+                tickets_df.to_csv(tickets_path, index=False)
+            else:
+                warnings_list.append('No ticket data available in Firestore.')
+
+        if 'chats' in requested_types:
+            chats_df = db.get_chats()
+            if chats_df is not None and not chats_df.empty:
+                chats_path = temp_dir / 'firestore_chats.csv'
+                chats_df.to_csv(chats_path, index=False)
+            else:
+                warnings_list.append('No chat data available in Firestore.')
+    except Exception as exc:
+        warnings_list.append(f'Error fetching Firestore data: {exc}')
+        return {
+            'success': False,
+            'warnings': warnings_list,
+            'tickets': None,
+            'chats': None
+        }
+
+    success = True
+    if 'tickets' in requested_types and tickets_path is None:
+        success = False
+    if 'chats' in requested_types and chats_path is None:
+        success = False
+
+    if not success and not warnings_list:
+        warnings_list.append('Requested Firestore data unavailable.')
+
+    return {
+        'success': success,
+        'warnings': warnings_list,
+        'tickets': tickets_path,
+        'chats': chats_path
+    }
 
 @app.route('/')
 def index():
@@ -182,9 +305,16 @@ def analyze():
         day_date = data.get('dayDate')
         data_source = data.get('dataSource', 'existing')
         analytics_type = data.get('analyticsType', 'tickets')  # 'tickets', 'chats', 'agent_performance', or 'combined'
-        selected_files = data.get('selectedFiles', [])
+        try:
+            selected_files = sanitize_filename_list(data.get('selectedFiles', []), 'selectedFiles')
+        except ValueError as exc:
+            return jsonify({'error': str(exc)}), 400
         include_delayed = data.get('includeDelayed', False)
         performance_period = data.get('performancePeriod', 'all')
+        temp_ticket_file = None
+        temp_chat_file = None
+        fallback_messages = []
+        effective_data_source = data_source
         
         # Handle agent performance comparison separately
         if analytics_type == 'agent_performance':
@@ -203,60 +333,39 @@ def analyze():
         
         # Handle Google Sheets data source
         if data_source == 'sheets':
-            # Use Google Sheets data - try to get from google_sheets_data_source
-            try:
-                from google_sheets_data_source import GoogleSheetsDataSource
+            requested = set()
+            if analytics_type in ['tickets', 'combined', 'agent_performance', 'individual_agent']:
+                requested.add('tickets')
+            if analytics_type in ['chats', 'combined']:
+                requested.add('chats')
+            sheets_payload = fetch_firestore_data(requested)
+            fallback_messages.extend(sheets_payload.get('warnings', []))
+            
+            if sheets_payload.get('success'):
+                temp_ticket_file = sheets_payload.get('tickets')
+                temp_chat_file = sheets_payload.get('chats')
                 
-                sheets_id = os.environ.get('GOOGLE_SHEETS_SPREADSHEET_ID')
-                creds_path = os.environ.get('GOOGLE_SHEETS_CREDENTIALS_PATH', 'service_account_credentials.json')
-                
-                if not sheets_id:
-                    return jsonify({
-                        'error': 'Google Sheets not configured. Please set up Google Sheets in the Admin Panel or select CSV files instead.',
-                        'suggestion': 'Go to Admin Panel → Configuration to set up Google Sheets, or use "Need ad-hoc data?" link to select local CSV files.'
-                    }), 400
-                
-                # Create temporary CSV files from Google Sheets data
-                sheets_source = GoogleSheetsDataSource(
-                    spreadsheet_id=sheets_id,
-                    credentials_path=creds_path
-                )
-                
-                temp_dir = Path(tempfile.mkdtemp())
-                
-                if analytics_type in ['tickets', 'combined', 'agent_performance', 'individual_agent']:
-                    tickets_df = sheets_source.get_tickets()
-                    if tickets_df is not None and not tickets_df.empty:
-                        temp_ticket_file = temp_dir / 'sheets_tickets.csv'
-                        tickets_df.to_csv(temp_ticket_file, index=False)
-                        file_paths.append(temp_ticket_file)
-                
-                if analytics_type in ['chats', 'combined']:
-                    chats_df = sheets_source.get_chats()
-                    if chats_df is not None and not chats_df.empty:
-                        temp_chat_file = temp_dir / 'sheets_chats.csv'
-                        chats_df.to_csv(temp_chat_file, index=False)
-                        if analytics_type == 'combined':
-                            # For combined, we'll handle this differently below
-                            pass
-                        else:
-                            file_paths = [temp_chat_file]
-                
-                if not file_paths and analytics_type != 'combined':
-                    return jsonify({
-                        'error': f'No data available in Google Sheets for {analytics_type} analysis',
-                        'suggestion': 'Please run a sync in the Admin Panel to populate Google Sheets with data, or use local CSV files instead.'
-                    }), 400
-                    
-            except Exception as e:
-                print(f"Error accessing Google Sheets: {e}")
-                return jsonify({
-                    'error': f'Failed to access Google Sheets: {str(e)}',
-                    'suggestion': 'Please check your Google Sheets configuration in the Admin Panel or use local CSV files instead.'
-                }), 400
+                if analytics_type == 'tickets' and temp_ticket_file:
+                    file_paths = [temp_ticket_file]
+                elif analytics_type == 'chats' and temp_chat_file:
+                    file_paths = [temp_chat_file]
+                elif analytics_type == 'combined':
+                    # Combined handled later using temp files
+                    pass
+                elif analytics_type in ['agent_performance', 'individual_agent'] and temp_ticket_file:
+                    file_paths = [temp_ticket_file]
+                else:
+                    fallback_messages.append('Google Sheets data incomplete for this analysis; using CSV files instead.')
+                    data_source = 'existing'
+            else:
+                data_source = 'existing'
+            
+            effective_data_source = 'sheets' if data_source == 'sheets' else 'existing'
                 
         elif data_source == 'uploaded':
-            file_paths = [UPLOAD_FOLDER / f for f in selected_files if f.endswith('.csv')]
+            file_paths, invalid = resolve_safe_csv_list(UPLOAD_FOLDER, selected_files)
+            if invalid:
+                return jsonify({'error': 'Invalid uploaded filenames provided', 'details': invalid}), 400
         else:
             # Handle different analytics types with local files
             if analytics_type == 'tickets':
@@ -271,9 +380,16 @@ def analyze():
             
             if analytics_type != 'combined':
                 if selected_files:
-                    file_paths = [source_dir / f for f in selected_files if f.endswith('.csv')]
+                    file_paths, invalid = resolve_safe_csv_list(source_dir, selected_files)
+                    if invalid:
+                        return jsonify({
+                            'error': f'Invalid {analytics_type} filenames provided',
+                            'details': invalid
+                        }), 400
                 else:
                     file_paths = list(source_dir.glob('*.csv'))
+        
+        effective_data_source = data_source
         
         if not file_paths and analytics_type != 'combined' and data_source != 'sheets':
             available_files = list(source_dir.glob('*.csv')) if 'source_dir' in locals() else []
@@ -295,8 +411,10 @@ def analyze():
                     return jsonify({'error': 'Week date must be a Monday'}), 400
                 
                 import pytz
-                atlantic = pytz.timezone("Canada/Atlantic")
-                start_dt = atlantic.localize(start.replace(hour=6, minute=0, second=0))
+                # CRITICAL: Must match ticket_processor.py timezone (US/Eastern, not Canada/Atlantic)!
+                eastern = pytz.timezone("US/Eastern")
+                # Start at midnight, not 6AM - this was causing missing data!
+                start_dt = eastern.localize(start.replace(hour=0, minute=0, second=0))
                 end_dt = start_dt + timedelta(days=7, seconds=-1)
                 label = f"Week of {start:%B %d, %Y}"
             except ValueError as e:
@@ -307,9 +425,10 @@ def analyze():
                 # Convert YYYY-MM-DD to datetime object
                 day = datetime.strptime(day_date, '%Y-%m-%d')
                 import pytz
-                atlantic = pytz.timezone("Canada/Atlantic")
-                start_dt = atlantic.localize(day.replace(hour=0, minute=0, second=0))
-                end_dt = atlantic.localize(day.replace(hour=23, minute=59, second=59))
+                # CRITICAL: Must match ticket_processor.py timezone (US/Eastern, not Canada/Atlantic)!
+                eastern = pytz.timezone("US/Eastern")
+                start_dt = eastern.localize(day.replace(hour=0, minute=0, second=0))
+                end_dt = eastern.localize(day.replace(hour=23, minute=59, second=59))
                 label = f"Day of {day:%B %d, %Y}"
             except ValueError as e:
                 return jsonify({'error': f'Invalid day date: {e}'}), 400
@@ -323,9 +442,10 @@ def analyze():
                     return jsonify({'error': 'End date must be after start date'}), 400
                 
                 import pytz
-                atlantic = pytz.timezone("Canada/Atlantic")
-                start_dt = atlantic.localize(start.replace(hour=0, minute=0, second=0))
-                end_dt = atlantic.localize(end.replace(hour=23, minute=59, second=59))
+                # CRITICAL: Must match ticket_processor.py timezone (US/Eastern, not Canada/Atlantic)!
+                eastern = pytz.timezone("US/Eastern")
+                start_dt = eastern.localize(start.replace(hour=0, minute=0, second=0))
+                end_dt = eastern.localize(end.replace(hour=23, minute=59, second=59))
                 label = f"Custom range {start:%B %d, %Y} – {end:%B %d, %Y}"
             except ValueError as e:
                 return jsonify({'error': f'Invalid date format: {e}'}), 400
@@ -359,9 +479,17 @@ def analyze():
                         else:  # chats
                             min_date = processor.df['chat_creation_date_adt'].min()
                             max_date = processor.df['chat_creation_date_adt'].max()
-                        data_range_msg = f"Available data: {min_date.strftime('%Y-%m-%d')} to {max_date.strftime('%Y-%m-%d')}"
-                    except:
-                        data_range_msg = "Data range unavailable"
+                        # Handle timezone-aware dates and NaT values
+                        if pd.isna(min_date) or pd.isna(max_date):
+                            data_range_msg = "Data range unavailable (contains invalid dates)"
+                        else:
+                            if hasattr(min_date, 'date'):
+                                min_date = min_date.date()
+                            if hasattr(max_date, 'date'):
+                                max_date = max_date.date()
+                            data_range_msg = f"Available data: {min_date.strftime('%Y-%m-%d')} to {max_date.strftime('%Y-%m-%d')}"
+                    except Exception as e:
+                        data_range_msg = f"Data range unavailable (error: {str(e)})"
 
                 return jsonify({
                     'error': f'No {analytics_type} found for the specified date range. {data_range_msg}',
@@ -413,9 +541,17 @@ def analyze():
                         else:  # chats
                             min_date = processor.df['chat_creation_date_adt'].min()
                             max_date = processor.df['chat_creation_date_adt'].max()
-                        data_range_msg = f"Available data: {min_date.strftime('%Y-%m-%d')} to {max_date.strftime('%Y-%m-%d')}"
-                    except:
-                        data_range_msg = "Data range unavailable"
+                        # Handle timezone-aware dates and NaT values
+                        if pd.isna(min_date) or pd.isna(max_date):
+                            data_range_msg = "Data range unavailable (contains invalid dates)"
+                        else:
+                            if hasattr(min_date, 'date'):
+                                min_date = min_date.date()
+                            if hasattr(max_date, 'date'):
+                                max_date = max_date.date()
+                            data_range_msg = f"Available data: {min_date.strftime('%Y-%m-%d')} to {max_date.strftime('%Y-%m-%d')}"
+                    except Exception as e:
+                        data_range_msg = f"Data range unavailable (error: {str(e)})"
 
                 return jsonify({
                     'error': f'No {analytics_type} found for the specified date range. {data_range_msg}',
@@ -447,32 +583,49 @@ def analyze():
             ticket_files = []
             chat_files = []
             
-            # Use separate file lists if provided (new approach)
-            frontend_ticket_files = data.get('ticketFiles', [])
-            frontend_chat_files = data.get('chatFiles', [])
+            try:
+                frontend_ticket_files = sanitize_filename_list(data.get('ticketFiles', []), 'ticketFiles')
+                frontend_chat_files = sanitize_filename_list(data.get('chatFiles', []), 'chatFiles')
+            except ValueError as exc:
+                return jsonify({'error': str(exc)}), 400
             
-            if data_source == 'uploaded':
+            if data_source == 'sheets':
+                if temp_ticket_file and temp_ticket_file.exists():
+                    ticket_files = [temp_ticket_file]
+                if temp_chat_file and temp_chat_file.exists():
+                    chat_files = [temp_chat_file]
+                if not ticket_files and not chat_files:
+                    return jsonify({
+                        'error': 'No data available in Google Sheets for combined analysis',
+                        'suggestion': 'Ensure both tickets and chats are synced to Google Sheets before running combined analytics.'
+                    }), 400
+            elif data_source == 'uploaded':
+                invalid_details = []
                 # For uploaded files, use provided lists or fallback to pattern matching
                 if frontend_ticket_files or frontend_chat_files:
-                    ticket_files = [UPLOAD_FOLDER / f for f in frontend_ticket_files if (UPLOAD_FOLDER / f).exists()]
-                    chat_files = [UPLOAD_FOLDER / f for f in frontend_chat_files if (UPLOAD_FOLDER / f).exists()]
+                    ticket_files, ticket_invalid = resolve_safe_csv_list(UPLOAD_FOLDER, frontend_ticket_files)
+                    chat_files, chat_invalid = resolve_safe_csv_list(UPLOAD_FOLDER, frontend_chat_files)
+                    invalid_details.extend(ticket_invalid + chat_invalid)
                 else:
                     # Fallback: distinguish by filename patterns
-                    for file in selected_files:
-                        file_path = UPLOAD_FOLDER / file
-                        if file_path.exists() and file.endswith('.csv'):
-                            filename_lower = file.lower()
-                            if any(keyword in filename_lower for keyword in ['ticket', 'support', 'case']):
-                                ticket_files.append(file_path)
-                            elif any(keyword in filename_lower for keyword in ['chat', 'livechat', 'conversation']):
-                                chat_files.append(file_path)
-                            else:
-                                ticket_files.append(file_path)
+                    fallback_paths, fallback_invalid = resolve_safe_csv_list(UPLOAD_FOLDER, selected_files)
+                    invalid_details.extend(fallback_invalid)
+                    for file_path in fallback_paths:
+                        filename_lower = file_path.name.lower()
+                        if any(keyword in filename_lower for keyword in ['chat', 'livechat', 'conversation']):
+                            chat_files.append(file_path)
+                        else:
+                            ticket_files.append(file_path)
+                if invalid_details:
+                    return jsonify({'error': 'Invalid uploaded filenames provided', 'details': invalid_details}), 400
             else:
                 # For existing files, use separate lists from frontend
                 if frontend_ticket_files or frontend_chat_files:
-                    ticket_files = [TICKETS_FOLDER / f for f in frontend_ticket_files if (TICKETS_FOLDER / f).exists()]
-                    chat_files = [CHATS_FOLDER / f for f in frontend_chat_files if (CHATS_FOLDER / f).exists()]
+                    ticket_files, ticket_invalid = resolve_safe_csv_list(TICKETS_FOLDER, frontend_ticket_files)
+                    chat_files, chat_invalid = resolve_safe_csv_list(CHATS_FOLDER, frontend_chat_files)
+                    invalid_details = ticket_invalid + chat_invalid
+                    if invalid_details:
+                        return jsonify({'error': 'Invalid filenames provided for existing data', 'details': invalid_details}), 400
                 else:
                     # Fallback: auto-detect all files
                     ticket_files = list(TICKETS_FOLDER.glob('*.csv'))
@@ -541,7 +694,42 @@ def analyze():
                     print(f"Warning: Chat processing failed: {e}")
             
             if not ticket_analytics and not chat_analytics:
-                return jsonify({'error': 'No valid data found for combined analysis'}), 400
+                ticket_range = None
+                chat_range = None
+
+                if ticket_processor and getattr(ticket_processor, 'df', None) is not None and len(ticket_processor.df) > 0:
+                    create_col = 'ticket_created_at_utc' if 'ticket_created_at_utc' in ticket_processor.df.columns else 'Create date'
+                    try:
+                        ticket_dates = pd.to_datetime(ticket_processor.df[create_col], errors='coerce')
+                        ticket_dates = ticket_dates.dropna()
+                        if not ticket_dates.empty:
+                            ticket_range = {
+                                'start': ticket_dates.min().isoformat(),
+                                'end': ticket_dates.max().isoformat(),
+                                'records': len(ticket_processor.df)
+                            }
+                    except Exception:
+                        pass
+
+                if chat_processor and getattr(chat_processor, 'df', None) is not None and len(chat_processor.df) > 0:
+                    create_col = 'chat_created_at_utc' if 'chat_created_at_utc' in chat_processor.df.columns else 'chat_creation_date_adt'
+                    try:
+                        chat_dates = pd.to_datetime(chat_processor.df[create_col], errors='coerce')
+                        chat_dates = chat_dates.dropna()
+                        if not chat_dates.empty:
+                            chat_range = {
+                                'start': chat_dates.min().isoformat(),
+                                'end': chat_dates.max().isoformat(),
+                                'records': len(chat_processor.df)
+                            }
+                    except Exception:
+                        pass
+
+                return jsonify({
+                    'error': 'No valid data found for combined analysis',
+                    'ticket_data_range': ticket_range,
+                    'chat_data_range': chat_range
+                }), 400
             
             # Store both analytics for dashboard generation
             analytics = {
@@ -790,6 +978,9 @@ def analyze():
                 'has_tickets': analytics.get('ticket_analytics') is not None,
                 'has_chats': analytics.get('chat_analytics') is not None
             })
+            response_data['data_source'] = effective_data_source
+            if fallback_messages:
+                response_data['warnings'] = fallback_messages
             
             return jsonify(response_data)
         else:
@@ -803,6 +994,9 @@ def analyze():
                 'files_processed': len(file_paths),
                 'dashboard_url': f'/results/{timestamp}/{dashboard_filename}'
             })
+            response_data['data_source'] = effective_data_source
+            if fallback_messages:
+                response_data['warnings'] = fallback_messages
             
             return jsonify(response_data)
         
@@ -844,15 +1038,31 @@ def handle_agent_performance_analysis(data_source, selected_files, performance_p
     try:
         # Determine which files to use
         file_paths = []
+        fallback_messages = []
+        effective_source = data_source
+        
+        if data_source == 'sheets':
+            sheets_payload = fetch_firestore_data({'tickets'})
+            fallback_messages.extend(sheets_payload.get('warnings', []))
+            if sheets_payload.get('success') and sheets_payload.get('tickets'):
+                file_paths = [sheets_payload.get('tickets')]
+            else:
+                data_source = 'existing'
+                effective_source = 'existing'
         
         if data_source == 'uploaded':
-            file_paths = [UPLOAD_FOLDER / f for f in selected_files if f.endswith('.csv')]
+            file_paths, invalid = resolve_safe_csv_list(UPLOAD_FOLDER, selected_files)
+            if invalid:
+                return jsonify({'error': 'Invalid uploaded filenames provided', 'details': invalid}), 400
         else:
             # Use ticket files for agent performance
             if selected_files:
-                file_paths = [TICKETS_FOLDER / f for f in selected_files if f.endswith('.csv')]
+                file_paths, invalid = resolve_safe_csv_list(TICKETS_FOLDER, selected_files)
+                if invalid:
+                    return jsonify({'error': 'Invalid ticket filenames provided', 'details': invalid}), 400
             else:
                 file_paths = list(TICKETS_FOLDER.glob('*.csv'))
+            effective_source = data_source
         
         if not file_paths:
             return jsonify({'error': 'No CSV files found for agent performance analysis'}), 400
@@ -946,13 +1156,18 @@ AGENT BREAKDOWN:
         
         save_dashboard_file(output_dir, 'index.html', index_html)
         
-        return jsonify({
+        response_payload = {
             'success': True,
             'message': f'Agent performance analysis completed for {period_desc}',
             'dashboard_url': f'/results/{output_dir.name}/agent_performance_dashboard.html',
             'summary_url': f'/results/{output_dir.name}/agent_performance_summary.txt',
-            'results_url': f'/results/{output_dir.name}/index.html'
-        })
+            'results_url': f'/results/{output_dir.name}/index.html',
+            'data_source': effective_source
+        }
+        if fallback_messages:
+            response_payload['warnings'] = fallback_messages
+        
+        return jsonify(response_payload)
         
     except Exception as e:
         import traceback
@@ -968,15 +1183,31 @@ def handle_individual_agent_analysis(data_source, selected_files, individual_per
             
         # Determine file paths
         file_paths = []
+        fallback_messages = []
+        effective_source = data_source
+        
+        if data_source == 'sheets':
+            sheets_payload = fetch_firestore_data({'tickets'})
+            fallback_messages.extend(sheets_payload.get('warnings', []))
+            if sheets_payload.get('success') and sheets_payload.get('tickets'):
+                file_paths = [sheets_payload.get('tickets')]
+            else:
+                data_source = 'existing'
+                effective_source = 'existing'
         
         if data_source == 'uploaded':
-            file_paths = [UPLOAD_FOLDER / f for f in selected_files if f.endswith('.csv')]
+            file_paths, invalid = resolve_safe_csv_list(UPLOAD_FOLDER, selected_files)
+            if invalid:
+                return jsonify({'error': 'Invalid uploaded filenames provided', 'details': invalid}), 400
         else:
             # Use ticket files for individual agent analysis
             if selected_files:
-                file_paths = [TICKETS_FOLDER / f for f in selected_files if f.endswith('.csv')]
+                file_paths, invalid = resolve_safe_csv_list(TICKETS_FOLDER, selected_files)
+                if invalid:
+                    return jsonify({'error': 'Invalid ticket filenames provided', 'details': invalid}), 400
             else:
                 file_paths = list(TICKETS_FOLDER.glob('*.csv'))
+            effective_source = data_source
         
         if not file_paths:
             return jsonify({'error': 'No CSV files found'}), 400
@@ -1069,13 +1300,18 @@ KEY INSIGHTS:
         
         save_dashboard_file(output_dir, 'index.html', index_html)
         
-        return jsonify({
+        response_payload = {
             'success': True,
             'message': f'Individual agent analysis completed for {selected_agent} ({period_desc})',
             'dashboard_url': f'/results/{output_dir.name}/individual_agent_dashboard.html',
             'summary_url': f'/results/{output_dir.name}/individual_agent_summary.txt',
-            'results_url': f'/results/{output_dir.name}/index.html'
-        })
+            'results_url': f'/results/{output_dir.name}/index.html',
+            'data_source': effective_source
+        }
+        if fallback_messages:
+            response_payload['warnings'] = fallback_messages
+        
+        return jsonify(response_payload)
         
     except Exception as e:
         import traceback
@@ -1651,6 +1887,11 @@ Error details: {str(query_error)}"""
         
     except Exception as e:
         return jsonify({"status": "error", "message": f"Server error: {str(e)}"})
+
+@app.route('/health')
+def health():
+    """Health check endpoint for load balancers and container orchestration"""
+    return jsonify({'status': 'healthy', 'timestamp': datetime.now().isoformat()}), 200
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5001)

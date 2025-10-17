@@ -50,20 +50,22 @@ def get_date_range(args: argparse.Namespace, use_timezone: bool = False) -> Tupl
     
     Args:
         args: Parsed command line arguments
-        use_timezone: Whether to apply Atlantic timezone (for ticket data)
+        use_timezone: Whether to apply Eastern timezone (for ticket data)
     
     Returns:
         Tuple of (start_date, end_date, label)
     """
     if use_timezone:
-        atlantic = pytz.timezone("Canada/Atlantic")
+        # CRITICAL: Must use US/Eastern to match ticket_processor.py, NOT Canada/Atlantic!
+        eastern = pytz.timezone("US/Eastern")
     
     if args.week:
         start = parse_date_string(args.week)
         validate_monday(start)
         
         if use_timezone:
-            start_dt = atlantic.localize(start.replace(hour=6, minute=0, second=0))
+            # CRITICAL: Start at midnight, not 6AM - matches app.py fix
+            start_dt = eastern.localize(start.replace(hour=0, minute=0, second=0))
             end_dt = start_dt + timedelta(days=7, seconds=-1)
         else:
             start_dt = start
@@ -75,8 +77,8 @@ def get_date_range(args: argparse.Namespace, use_timezone: bool = False) -> Tupl
         day = parse_date_string(args.day)
         
         if use_timezone:
-            start_dt = atlantic.localize(day.replace(hour=0, minute=0, second=0))
-            end_dt = atlantic.localize(day.replace(hour=23, minute=59, second=59))
+            start_dt = eastern.localize(day.replace(hour=0, minute=0, second=0))
+            end_dt = eastern.localize(day.replace(hour=23, minute=59, second=59))
         else:
             start_dt = end_dt = day
             
@@ -91,8 +93,8 @@ def get_date_range(args: argparse.Namespace, use_timezone: bool = False) -> Tupl
             raise ValueError("End date must be after start date.")
             
         if use_timezone:
-            start_dt = atlantic.localize(start_dt.replace(hour=0, minute=0, second=0))
-            end_dt = atlantic.localize(end_dt.replace(hour=23, minute=59, second=59))
+            start_dt = eastern.localize(start_dt.replace(hour=0, minute=0, second=0))
+            end_dt = eastern.localize(end_dt.replace(hour=23, minute=59, second=59))
             
         label = f"Custom range {start_dt:%B %d, %Y} – {end_dt:%B %d, %Y}"
         

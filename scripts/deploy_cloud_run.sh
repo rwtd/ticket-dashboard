@@ -126,9 +126,11 @@ gcloud run deploy "${SERVICE_NAME}" \
   --min-instances=0 \
   --max-instances=3 \
   --concurrency=80 \
-  --cpu=1 \
-  --memory=512Mi \
-  --set-env-vars "WIDGETS_XFO=${WIDGETS_XFO},WIDGETS_FRAME_ANCESTORS=${WIDGETS_FRAME_ANCESTORS}"
+  --cpu=2 \
+  --memory=1Gi \
+  --timeout=900 \
+  --set-env-vars "WIDGETS_XFO=${WIDGETS_XFO},WIDGETS_FRAME_ANCESTORS=${WIDGETS_FRAME_ANCESTORS},GOOGLE_SHEETS_CREDENTIALS_PATH=/app/credentials/service_account_credentials.json" \
+  --update-secrets=/app/credentials/service_account_credentials.json=google-sheets-credentials:latest,GOOGLE_SHEETS_SPREADSHEET_ID=GOOGLE_SHEETS_SPREADSHEET_ID:latest,HUBSPOT_API_KEY=HUBSPOT_API_KEY:latest,LIVECHAT_PAT=LIVECHAT_PAT:latest,GEMINI_API_KEY=GEMINI_API_KEY:latest
 
 # Print URL
 SERVICE_URL="$(gcloud run services describe "${SERVICE_NAME}" --region="${REGION}" --format='value(status.url)')"

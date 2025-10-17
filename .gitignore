@@ -61,7 +61,11 @@ chats/*.csv
 # Temporary files
 *.tmp
 *.temp
-debug_radio.html
+debug_*.html
+debug_*.py
+test_*.py
+enhanced_*.html
+*.backup
 
 # OS
 .DS_Store

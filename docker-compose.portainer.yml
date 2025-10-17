@@ -1,0 +1,38 @@
+version: "3.9"
+
+services:
+  ticket_dashboard:
+    container_name: ticket-dashboard
+    image: ticket-dashboard:latest
+    restart: unless-stopped
+    environment:
+      - PORT=8080
+      - FLASK_ENV=production
+      - HUBSPOT_API_KEY=${HUBSPOT_API_KEY:-}
+      - LIVECHAT_PAT=${LIVECHAT_PAT:-}
+      - GOOGLE_SHEETS_SPREADSHEET_ID=${GOOGLE_SHEETS_SPREADSHEET_ID:-}
+      - GOOGLE_SHEETS_CREDENTIALS_PATH=${GOOGLE_SHEETS_CREDENTIALS_PATH:-service_account_credentials.json}
+      - DATA_SYNC_INTERVAL_HOURS=${DATA_SYNC_INTERVAL_HOURS:-4}
+      - DATA_RETENTION_DAYS=${DATA_RETENTION_DAYS:-365}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-change-me}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./tickets:/app/tickets
+      - ./uploads:/app/uploads
+      - ./results:/app/results
+      - ./config:/app/config:ro
+      - ./service_account_credentials.json:/app/service_account_credentials.json:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+    networks:
+      - ticket_net
+
+networks:
+  ticket_net:
+    driver: bridge

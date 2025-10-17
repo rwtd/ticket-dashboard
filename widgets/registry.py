@@ -119,17 +119,60 @@ def normalize_params(raw: Dict[str, Any], schema: Dict[str, Any]) -> Dict[str, A
 
 def compute_range_bounds(range_value: str, source: str) -> Tuple[Optional[datetime], Optional[datetime]]:
     """
-    Compute timezone-aware [start, end] datetimes from 'range' like '52w', '26w', '12w', '8w', '4w', or 'all'.
+    Compute timezone-aware [start, end] datetimes from 'range' like '7d', '52w', '26w', '12w', '8w', '4w', 'ytd', or 'all'.
     'source' determines timezone:
       - tickets -> US/Eastern
       - chats   -> Canada/Atlantic
+    
+    Note: 'd' suffix means BUSINESS DAYS (weekdays only), not calendar days
+    Note: '13w' is special - mapped to quarterly view (4 quarters)
     """
     tz = pytz.timezone("US/Eastern") if source == "tickets" else pytz.timezone("Canada/Atlantic")
     now = datetime.now(tz)
     if not range_value or range_value == "all":
         return None, None
     try:
-        if range_value.endswith("w"):
+        if range_value == "ytd":
+            # Year to date - from January 1st of current year
+            start = tz.localize(datetime(now.year, 1, 1, 0, 0, 0))
+            end = now
+            return start, end
+        elif range_value == "13w":
+            # Quarterly view - show 4 quarters (current + 3 previous)
+            # Go back to start of quarter from 3 quarters ago
+            current_quarter = (now.month - 1) // 3 + 1  # 1-4
+            quarters_back = 3
+            
+            # Calculate start date (beginning of quarter from 3 quarters ago)
+            start_quarter = current_quarter - quarters_back
+            start_year = now.year
+            while start_quarter < 1:
+                start_quarter += 4
+                start_year -= 1
+            
+            start_month = (start_quarter - 1) * 3 + 1  # Q1=1, Q2=4, Q3=7, Q4=10
+            start = tz.localize(datetime(start_year, start_month, 1, 0, 0, 0))
+            end = now
+            return start, end
+        elif range_value.endswith("d"):
+            # Business days (e.g., "7d" for last 7 business days)
+            business_days = int(range_value[:-1])
+            # Start counting from yesterday (to ensure we get full days of data)
+            current = now - timedelta(days=1)
+            days_counted = 0
+            # Count backwards to get business days
+            while days_counted < business_days:
+                # Skip weekends (Saturday=5, Sunday=6)
+                if current.weekday() < 5:  # Monday=0 through Friday=4
+                    days_counted += 1
+                    if days_counted == business_days:
+                        break
+                current = current - timedelta(days=1)
+            # Normalize to start of day
+            start = tz.localize(current.replace(hour=0, minute=0, second=0, microsecond=0).replace(tzinfo=None)) if current.tzinfo is None else current.replace(hour=0, minute=0, second=0, microsecond=0)
+            end = now
+            return start, end
+        elif range_value.endswith("w"):
             weeks = int(range_value[:-1])
             start = now - timedelta(weeks=weeks)
             # normalize to start of day
@@ -248,18 +291,66 @@ def _load_processed_dataframe(source: str, start_dt: Optional[datetime], end_dt:
         return None
 
 
-def _load_source_dataframe(source: str, start_dt: Optional[datetime], end_dt: Optional[datetime]) -> Optional[pd.DataFrame]:
+def _load_source_dataframe(source: str, start_dt: Optional[datetime], end_dt: Optional[datetime], range_val: Optional[str] = None) -> Optional[pd.DataFrame]:
     """
-    Load and process data for the given source with enhanced integration.
+    Load and process data for the given source with enhanced integration and caching.
 
     Priority:
-    1. Google Sheets (primary data source - always up-to-date)
-    2. Processed data from main app results directory
-    3. Fallback to processing raw CSV files
+    1. Cache check (fastest)
+    2. Firestore (primary data source - real-time)
+    3. Google Sheets (fallback - batch updates)
+    4. Processed data from main app results directory
+    5. Fallback to processing raw CSV files
 
     Returns the filtered DataFrame (copy) or None on failure.
     """
-    # Priority 1: Try Google Sheets (primary source)
+    # Generate cache key - include range_val to prevent different ranges from sharing cache
+    cache_key = f"data:{source}:{range_val}:{start_dt}:{end_dt}"
+    
+    # Priority 0: Check cache first
+    try:
+        from cache_manager import CacheManager
+        cache = CacheManager()
+        cached_data = cache.get(cache_key)
+        if cached_data is not None:
+            print(f"✅ Using cached {source} data (fastest)")
+            return cached_data
+    except Exception as e:
+        print(f"⚠️ Cache check failed: {e}")
+    
+    # Priority 1: Try Firestore (primary real-time source)
+    try:
+        from firestore_db import FirestoreDatabase
+        from ticket_processor import TicketDataProcessor
+        
+        db = FirestoreDatabase()
+        if source == "tickets":
+            df = db.get_tickets(start_date=start_dt, end_date=end_dt)
+            if df is not None and not df.empty:
+                # Recalculate response times since Firestore may have stale calculations
+                processor = TicketDataProcessor()
+                df = processor._calc_first_response(df)
+                print(f"✅ Using Firestore {source} data (real-time primary source, response times recalculated)")
+                # Cache the result
+                try:
+                    cache.set(cache_key, df.copy(), ttl=300)
+                except:
+                    pass
+                return df.copy()
+        elif source == "chats":
+            df = db.get_chats(start_date=start_dt, end_date=end_dt)
+            if df is not None and not df.empty:
+                print(f"✅ Using Firestore {source} data (real-time primary source)")
+                # Cache the result
+                try:
+                    cache.set(cache_key, df.copy(), ttl=300)
+                except:
+                    pass
+                return df.copy()
+    except Exception as e:
+        print(f"⚠️ Firestore unavailable: {e}, trying Google Sheets fallback")
+    
+    # Priority 2: Try Google Sheets (fallback batch source)
     try:
         from google_sheets_data_source import get_sheets_data_source
 
@@ -268,23 +359,38 @@ def _load_source_dataframe(source: str, start_dt: Optional[datetime], end_dt: Op
             if source == "tickets":
                 df = sheets_ds.get_tickets_filtered(start_date=start_dt, end_date=end_dt)
                 if df is not None and not df.empty:
-                    print(f"✅ Using Google Sheets {source} data (primary source)")
+                    print(f"✅ Using Google Sheets {source} data (batch fallback)")
+                    # Cache the result
+                    try:
+                        cache.set(cache_key, df.copy(), ttl=300)
+                    except:
+                        pass
                     return df.copy()
             elif source == "chats":
                 df = sheets_ds.get_chats_filtered(start_date=start_dt, end_date=end_dt)
                 if df is not None and not df.empty:
-                    print(f"✅ Using Google Sheets {source} data (primary source)")
+                    print(f"✅ Using Google Sheets {source} data (batch fallback)")
+                    # Cache the result
+                    try:
+                        cache.set(cache_key, df.copy(), ttl=300)
+                    except:
+                        pass
                     return df.copy()
     except Exception as e:
-        print(f"⚠️  Google Sheets unavailable: {e}, falling back to local data")
+        print(f"⚠️ Google Sheets unavailable: {e}, trying local data fallback")
 
-    # Priority 2: Try processed data from main app
+    # Priority 3: Try processed data from main app
     processed_df = _load_processed_dataframe(source, start_dt, end_dt)
     if processed_df is not None:
         print(f"✅ Using processed {source} data from results directory")
+        # Cache the result
+        try:
+            cache.set(cache_key, processed_df, ttl=300)
+        except:
+            pass
         return processed_df
 
-    # Priority 3: Fallback to raw data processing
+    # Priority 4: Fallback to raw data processing
     try:
         if source == "tickets":
             data_dir = Path("tickets")
@@ -295,7 +401,12 @@ def _load_source_dataframe(source: str, start_dt: Optional[datetime], end_dt: Op
             proc.load_data(files)
             proc.process_data()
             df_filtered, _, _ = proc.filter_date_range(start_dt, end_dt)
-            print(f"⚙️ Processed raw {source} CSV data (fallback)")
+            print(f"⚙️ Processed raw {source} CSV data (final fallback)")
+            # Cache the result
+            try:
+                cache.set(cache_key, df_filtered.copy(), ttl=300)
+            except:
+                pass
             return df_filtered.copy()
         elif source == "chats":
             data_dir = Path("chats")
@@ -306,7 +417,12 @@ def _load_source_dataframe(source: str, start_dt: Optional[datetime], end_dt: Op
             proc.load_data(files)
             proc.process_data()
             df_filtered, _, _ = proc.filter_date_range(start_dt, end_dt)
-            print(f"⚙️ Processed raw {source} CSV data (fallback)")
+            print(f"⚙️ Processed raw {source} CSV data (final fallback)")
+            # Cache the result
+            try:
+                cache.set(cache_key, df_filtered.copy(), ttl=300)
+            except:
+                pass
             return df_filtered.copy()
         else:
             return None
@@ -359,83 +475,7 @@ def demo_timeseries(params: Optional[Dict[str, Any]] = None) -> go.Figure:
 # Real widget: weekly_response_time_trends
 # --------------------------------------------------------------------
 
-@register("weekly_response_time_trends", title="Weekly Response Time Trends")
-def weekly_response_time_trends(params: Dict[str, Any]) -> go.Figure:
-    """
-    Plot weekly response time trend for either tickets or chats.
-    Params:
-      - source: tickets|chats
-      - stat: median|mean
-      - range: all|52w|26w|12w|8w|4w
-    """
-    meta = REGISTRY["weekly_response_time_trends"]["meta"]
-    schema = meta.get("params", {})
-    p = normalize_params(params or {}, schema)
-    source = p.get("source", "tickets")
-    stat = p.get("stat", "median")
-    range_val = p.get("range", "12w")
-
-    # Compute date range and load data
-    start_dt, end_dt = compute_range_bounds(range_val, source)
-    df = _load_source_dataframe(source, start_dt, end_dt)
-
-    y_title = "Response Time (Hours)"
-    if df is None or len(df) == 0:
-        return _no_data_figure(meta.get("title"), "Week Starting", y_title)
-
-    # Prepare weekly aggregation
-    try:
-        if source == "tickets":
-            # Ensure required columns exist
-            if "Create date" not in df.columns or "First Response Time (Hours)" not in df.columns:
-                return _no_data_figure(meta.get("title"), "Week Starting", y_title)
-
-            # Week start (Monday) naive timestamps
-            week_start = df["Create date"].dt.tz_localize(None).dt.to_period("W-MON").dt.start_time
-            values = df["First Response Time (Hours)"].astype(float)
-            data = pd.DataFrame({"week_start": week_start, "value": values})
-            data = data[data["value"].notna() & (data["value"] > 0)]
-        else:  # chats
-            if "chat_creation_date_adt" not in df.columns or "first_response_time" not in df.columns:
-                return _no_data_figure(meta.get("title"), "Week Starting", y_title)
-            week_start = df["chat_creation_date_adt"].dt.tz_localize(None).dt.to_period("W-MON").dt.start_time
-            # Convert to hours (first_response_time expected to be seconds or minutes; treat as seconds -> hours)
-            vals_hours = pd.to_numeric(df["first_response_time"], errors="coerce") / 3600.0
-            data = pd.DataFrame({"week_start": week_start, "value": vals_hours})
-            data = data[data["value"].notna() & (data["value"] > 0)]
-
-        if len(data) == 0:
-            return _no_data_figure(meta.get("title"), "Week Starting", y_title)
-
-        agg_func = "median" if stat == "median" else "mean"
-        weekly = data.groupby("week_start")["value"].agg(agg_func).reset_index()
-        weekly = weekly.sort_values("week_start")
-
-        if len(weekly) == 0:
-            return _no_data_figure(meta.get("title"), "Week Starting", y_title)
-
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(
-            x=weekly["week_start"],
-            y=weekly["value"],
-            mode="lines+markers",
-            name=f"{stat.title()}",
-            line=dict(width=2),
-            marker=dict(size=6)
-        ))
-
-        title = f"Weekly Response Time Trends ({source.title()}, {stat.title()})"
-        fig.update_layout(
-            title=title,
-            xaxis_title="Week Starting",
-            yaxis_title=y_title,
-            margin=dict(l=40, r=20, t=50, b=40),
-            template="plotly_dark",
-            showlegend=True
-        )
-        return fig
-    except Exception:
-        return _no_data_figure(meta.get("title"), "Week Starting", y_title)
+# REMOVED: weekly_response_time_trends - replaced by weekly_response_breakdown with view parameter
 
 
 # --------------------------------------------------------------------
@@ -460,7 +500,7 @@ def volume_daily_historic(params: Dict[str, Any]) -> go.Figure:
 
     # Compute date range and load data
     start_dt, end_dt = compute_range_bounds(range_val, source)
-    df = _load_source_dataframe(source, start_dt, end_dt)
+    df = _load_source_dataframe(source, start_dt, end_dt, range_val)
 
     if df is None or len(df) == 0:
         return _no_data_figure(meta.get("title"), "Date", "Count")
@@ -520,33 +560,22 @@ def volume_daily_historic(params: Dict[str, Any]) -> go.Figure:
 # Widget metadata: schema and examples
 # --------------------------------------------------------------------
 
-# weekly_response_time_trends schema
-REGISTRY["weekly_response_time_trends"]["meta"].update({
-    "description": "Weekly response time trends using ticket or chat data. Stat toggle median|mean.",
-    "params": {
-        "source": {"type": "enum", "values": ["tickets", "chats"], "default": "tickets"},
-        "stat": {"type": "enum", "values": ["median", "mean"], "default": "median"},
-        "range": {"type": "enum", "values": ["all", "52w", "26w", "12w", "8w", "4w"], "default": "12w"},
-    },
-    "examples": [
-        {"label": "Default", "query": ""},
-        {"label": "Tickets, median, 12w", "query": "source=tickets&stat=median&range=12w"},
-        {"label": "Chats, mean, 26w", "query": "source=chats&stat=mean&range=26w"}
-    ]
-})
+# REMOVED: weekly_response_time_trends metadata
 
 # volume_daily_historic schema
 REGISTRY["volume_daily_historic"]["meta"].update({
     "description": "Historic daily volume counts for tickets or chats.",
     "params": {
         "source": {"type": "enum", "values": ["tickets", "chats"], "default": "tickets"},
-        "range": {"type": "enum", "values": ["all", "52w", "26w", "12w", "8w", "4w"], "default": "26w"},
+        "range": {"type": "enum", "values": ["7d", "8w", "12w", "13w", "ytd", "all"], "default": "12w"},
         "include_weekends": {"type": "bool", "default": True},
     },
     "examples": [
         {"label": "Default", "query": ""},
+        {"label": "Last 7 days", "query": "range=7d"},
         {"label": "Tickets, 8w, weekdays only", "query": "source=tickets&range=8w&include_weekends=false"},
-        {"label": "Chats, 52w", "query": "source=chats&range=52w"}
+        {"label": "Quarterly", "query": "range=13w"},
+        {"label": "Chats, YTD", "query": "source=chats&range=ytd"}
     ]
 })
 
@@ -600,7 +629,7 @@ def tickets_by_pipeline(params: Dict[str, Any]) -> go.Figure:
     pipelines = _parse_list(p.get("pipelines"))
 
     start_dt, end_dt = compute_range_bounds(range_val, source)
-    df = _load_source_dataframe("tickets", start_dt, end_dt)
+    df = _load_source_dataframe("tickets", start_dt, end_dt, range_val)
 
     if df is None or len(df) == 0 or "Pipeline" not in df.columns:
         return _no_data_figure(meta.get("title"), "Pipeline", "Tickets")
@@ -661,7 +690,7 @@ def weekday_weekend_distribution(params: Dict[str, Any]) -> go.Figure:
     range_val = p.get("range", "12w")
 
     start_dt, end_dt = compute_range_bounds(range_val, source)
-    df = _load_source_dataframe("tickets", start_dt, end_dt)
+    df = _load_source_dataframe("tickets", start_dt, end_dt, range_val)
 
     if df is None or len(df) == 0 or "Weekend_Ticket" not in df.columns:
         return _no_data_figure(meta.get("title"), "Category", "Count")
@@ -674,18 +703,49 @@ def weekday_weekend_distribution(params: Dict[str, Any]) -> go.Figure:
         if len(values) == 0:
             return _no_data_figure(meta.get("title"), "Category", "Count")
 
+        # Calculate timeframe for display
+        timeframe_map = {
+            "7d": "7 Business Days",
+            "8w": "8 Weeks",
+            "12w": "12 Weeks",
+            "13w": "Quarterly",
+            "ytd": "Year to Date",
+            "4w": "4 Weeks",
+            "26w": "26 Weeks",
+            "52w": "52 Weeks",
+            "all": "All Time"
+        }
+        timeframe_label = timeframe_map.get(range_val, "12 Weeks")
+        
         fig = go.Figure()
         fig.add_trace(go.Pie(
             labels=labels,
             values=values,
             hole=0.35,
-            marker=dict(colors=["rgba(78,205,196,0.85)", "rgba(255,107,107,0.85)"])
+            marker=dict(colors=["rgba(78,205,196,0.95)", "rgba(255,107,107,0.95)"]),
+            textfont=dict(size=18, color='white'),  # More prominent labels
+            textposition='inside',
+            textinfo='label+percent',
+            hovertemplate='<b>%{label}</b><br>Count: %{value}<br>%{percent}<extra></extra>'
         ))
         fig.update_layout(
-            title=meta.get("title"),
+            title=dict(
+                text=f"{meta.get('title')}<br><sub>{timeframe_label}</sub>",
+                font=dict(size=18),
+                x=0.5,
+                xanchor='center'
+            ),
             template="plotly_dark",
-            margin=dict(l=40, r=20, t=50, b=40),
-            showlegend=True
+            margin=dict(l=40, r=40, t=80, b=40),
+            showlegend=True,
+            legend=dict(
+                font=dict(size=16, color='white'),  # More prominent legend
+                orientation='h',
+                yanchor='bottom',
+                y=-0.15,
+                xanchor='center',
+                x=0.5
+            )
         )
         return fig
     except Exception:
@@ -696,11 +756,13 @@ REGISTRY["weekday_weekend_distribution"]["meta"].update({
     "description": "Donut chart comparing weekday vs weekend ticket share.",
     "params": {
         "source": {"type": "enum", "values": ["tickets"], "default": "tickets"},
-        "range": {"type": "enum", "values": ["all", "52w", "26w", "12w", "8w", "4w"], "default": "12w"},
+        "range": {"type": "enum", "values": ["7d", "8w", "12w", "13w", "ytd", "all"], "default": "12w"},
     },
     "examples": [
         {"label": "Default", "query": ""},
-        {"label": "Last 4w", "query": "range=4w"}
+        {"label": "Last 7 days", "query": "range=7d"},
+        {"label": "Last 8 weeks", "query": "range=8w"},
+        {"label": "Quarterly", "query": "range=13w"}
     ]
 })
 
@@ -709,18 +771,27 @@ REGISTRY["weekday_weekend_distribution"]["meta"].update({
 # --------------------------------------------------------------------
 @register("weekly_response_breakdown", title="Weekly Response Breakdown")
 def weekly_response_breakdown(params: Dict[str, Any]) -> go.Figure:
+    """
+    Weekly response breakdown with separate scaling for weekday vs weekend.
+    Shows ONLY weekday OR weekend at a time to avoid scale conflicts.
+    
+    Params:
+      - view: weekday|weekend (default: weekday)
+      - stat: median|mean
+      - range: all|ytd|13w|12w|8w
+      - show_trend: bool
+    """
     meta = REGISTRY["weekly_response_breakdown"]["meta"]
     schema = meta.get("params", {})
     p = normalize_params(params or {}, schema)
 
-    source = p.get("source", "tickets")
+    view = p.get("view", "weekday")  # NEW: weekday or weekend view
     stat = p.get("stat", "median")
-    range_val = p.get("range", "all")
-    include_weekend_series = bool(p.get("include_weekend_series", False))
+    range_val = p.get("range", "12w")
     show_trend = bool(p.get("show_trend", True))
 
-    start_dt, end_dt = compute_range_bounds(range_val, source)
-    df = _load_source_dataframe("tickets", start_dt, end_dt)
+    start_dt, end_dt = compute_range_bounds(range_val, "tickets")
+    df = _load_source_dataframe("tickets", start_dt, end_dt, range_val)
 
     y_title = f"{stat.title()} Response Time (Hours)"
     if df is None or len(df) == 0:
@@ -730,63 +801,166 @@ def weekly_response_breakdown(params: Dict[str, Any]) -> go.Figure:
         if "Create date" not in df.columns or "First Response Time (Hours)" not in df.columns or "Weekend_Ticket" not in df.columns:
             return _no_data_figure(meta.get("title"), "Week Starting", y_title)
 
-        # Prepare weekly labels
-        week_start = df["Create date"].dt.tz_localize(None).dt.to_period("W-MON").dt.start_time
-        dfw = df.copy()
-        dfw["week_start"] = week_start
-        vals = _safe_hour_series(dfw["First Response Time (Hours)"])
-        dfw = dfw.assign(val=vals)
-        dfw = dfw[dfw["val"].notna() & (dfw["val"] > 0)]
+        # Filter to selected view ONLY (weekday OR weekend, never both)
+        if view == "weekend":
+            df = df[df["Weekend_Ticket"] == True].copy()
+            view_label = "Weekend"
+            bar_color = "rgba(255, 234, 167, 0.85)"
+            trend_color = "rgba(255, 193, 7, 0.9)"
+        else:  # weekday (default)
+            df = df[df["Weekend_Ticket"] == False].copy()
+            view_label = "Weekday"
+            bar_color = "rgba(78, 205, 196, 0.85)"
+            trend_color = "rgba(0, 212, 170, 0.9)"
 
-        if len(dfw) == 0:
-            return _no_data_figure(meta.get("title"), "Week Starting", y_title)
+        if len(df) == 0:
+            return _no_data_figure(meta.get("title"), "Week Starting", f"No {view_label} Data")
 
-        agg = "median" if stat == "median" else "mean"
-        weekly_all = dfw.groupby("week_start")["val"].agg(agg).reset_index(name="All")
-        weekly_weekday = dfw[dfw["Weekend_Ticket"] == False].groupby("week_start")["val"].agg(agg).reset_index(name="Weekday")
-        result = weekly_all.merge(weekly_weekday, on="week_start", how="outer")
+        # Prepare aggregation - DAILY for 7d range, QUARTERLY for 13w (quarterly button), WEEKLY for others
+        if range_val == "13w":
+            # Quarterly aggregation (13w = "Quarterly" button)
+            dfw = df.copy()
+            # Calculate quarter: Q1=Jan-Mar(1-3), Q2=Apr-Jun(4-6), Q3=Jul-Sep(7-9), Q4=Oct-Dec(10-12)
+            dfw["quarter"] = dfw["Create date"].dt.quarter
+            dfw["year"] = dfw["Create date"].dt.year
+            dfw["quarter_label"] = "Q" + dfw["quarter"].astype(str) + " " + dfw["year"].astype(str)
+            
+            vals = _safe_hour_series(dfw["First Response Time (Hours)"])
+            dfw = dfw.assign(val=vals)
+            dfw = dfw[dfw["val"].notna() & (dfw["val"] > 0)]
 
-        if include_weekend_series:
-            weekly_weekend = dfw[dfw["Weekend_Ticket"] == True].groupby("week_start")["val"].agg(agg).reset_index(name="Weekend")
-            result = result.merge(weekly_weekend, on="week_start", how="outer")
+            if len(dfw) == 0:
+                return _no_data_figure(meta.get("title"), "Quarter", y_title)
 
-        result = result.sort_values("week_start").fillna(pd.NA)
+            agg = "median" if stat == "median" else "mean"
+            quarterly = dfw.groupby(["year", "quarter", "quarter_label"])[["val"]].agg(agg).reset_index()
+            quarterly = quarterly.sort_values(["year", "quarter"])
+            quarterly = quarterly.rename(columns={"val": "response_time"})
+            
+            # Keep only last 4 quarters (current + 3 previous)
+            quarterly = quarterly.tail(4)
+            
+            if len(quarterly) == 0:
+                return _no_data_figure(meta.get("title"), "Quarter", y_title)
+            
+            # Use quarterly data
+            time_data = quarterly
+            time_col = "quarter_label"
+            x_title = "Quarter"
+        elif range_val == "7d":
+            # Daily aggregation for 7-day view - WEEKDAYS ONLY (no weekend gaps)
+            date_col = df["Create date"].dt.tz_localize(None).dt.date
+            dfw = df.copy()
+            dfw["date"] = date_col
+            dfw["weekday"] = pd.to_datetime(dfw["date"]).dt.weekday
+            
+            # Filter to weekdays only (Monday=0 through Friday=4)
+            dfw = dfw[dfw["weekday"] < 5].copy()
+            
+            vals = _safe_hour_series(dfw["First Response Time (Hours)"])
+            dfw = dfw.assign(val=vals)
+            dfw = dfw[dfw["val"].notna() & (dfw["val"] > 0)]
 
-        if len(result) == 0:
-            return _no_data_figure(meta.get("title"), "Week Starting", y_title)
+            if len(dfw) == 0:
+                return _no_data_figure(meta.get("title"), "Date", y_title)
 
+            agg = "median" if stat == "median" else "mean"
+            daily = dfw.groupby("date")["val"].agg(agg).reset_index(name="response_time")
+            daily = daily.sort_values("date")
+            
+            if len(daily) == 0:
+                return _no_data_figure(meta.get("title"), "Date", y_title)
+            
+            # Use daily data (weekdays only - no gaps)
+            time_data = daily
+            time_col = "date"
+            x_title = "Date"
+        else:
+            # Weekly aggregation for other ranges
+            week_start = df["Create date"].dt.tz_localize(None).dt.to_period("W-MON").dt.start_time
+            dfw = df.copy()
+            dfw["week_start"] = week_start
+            vals = _safe_hour_series(dfw["First Response Time (Hours)"])
+            dfw = dfw.assign(val=vals)
+            dfw = dfw[dfw["val"].notna() & (dfw["val"] > 0)]
+
+            if len(dfw) == 0:
+                return _no_data_figure(meta.get("title"), "Week Starting", y_title)
+
+            agg = "median" if stat == "median" else "mean"
+            weekly = dfw.groupby("week_start")["val"].agg(agg).reset_index(name="response_time")
+            weekly = weekly.sort_values("week_start")
+
+            if len(weekly) == 0:
+                return _no_data_figure(meta.get("title"), "Week Starting", y_title)
+            
+            # Use weekly data
+            time_data = weekly
+            time_col = "week_start"
+            x_title = "Week Starting"
+
+        # Create figure with single view
         fig = go.Figure()
-        fig.add_trace(go.Bar(x=result["week_start"], y=result["All"], name="All Tickets", marker_color="rgba(78,205,196,0.85)"))
-        fig.add_trace(go.Bar(x=result["week_start"], y=result["Weekday"], name="Weekday", marker_color="rgba(255,107,107,0.85)"))
+        
+        # Add bars for selected view only
+        fig.add_trace(go.Bar(
+            x=time_data[time_col],
+            y=time_data["response_time"],
+            name=f"{view_label} {stat.title()}",
+            marker_color=bar_color,
+            text=[f"{val:.2f}h" for val in time_data["response_time"]],
+            textposition='outside'
+        ))
 
-        if include_weekend_series and "Weekend" in result.columns:
-            fig.add_trace(go.Bar(x=result["week_start"], y=result["Weekend"], name="Weekend", marker_color="rgba(255,234,167,0.85)"))
-
-        # Trend lines
-        if show_trend and len(result) > 1:
+        # Add trend line if requested
+        if show_trend and len(time_data) > 1:
             import numpy as np
-            x = np.arange(len(result))
-            if result["All"].notna().sum() > 1:
-                y_all = pd.to_numeric(result["All"], errors="coerce")
-                m, b = np.polyfit(x[y_all.notna()], y_all.dropna(), 1)
-                fig.add_trace(go.Scatter(x=result["week_start"], y=m * x + b, mode="lines", name="Trend (All)", line=dict(color="rgba(102,126,234,1)", dash="dash")))
-            if result["Weekday"].notna().sum() > 1:
-                y_wd = pd.to_numeric(result["Weekday"], errors="coerce")
-                m, b = np.polyfit(x[y_wd.notna()], y_wd.dropna(), 1)
-                fig.add_trace(go.Scatter(x=result["week_start"], y=m * x + b, mode="lines", name="Trend (Weekday)", line=dict(color="rgba(255,107,107,1)", dash="dot")))
-            if include_weekend_series and "Weekend" in result.columns and result["Weekend"].notna().sum() > 1:
-                y_we = pd.to_numeric(result["Weekend"], errors="coerce")
-                m, b = np.polyfit(x[y_we.notna()], y_we.dropna(), 1)
-                fig.add_trace(go.Scatter(x=result["week_start"], y=m * x + b, mode="lines", name="Trend (Weekend)", line=dict(color="rgba(255,234,167,1)", dash="dashdot")))
+            x_values = np.arange(len(time_data))
+            y_values = time_data["response_time"].values
+            z = np.polyfit(x_values, y_values, 1)
+            trend_line = np.poly1d(z)(x_values)
 
+            fig.add_trace(go.Scatter(
+                x=time_data[time_col],
+                y=trend_line,
+                mode="lines",
+                name=f"{view_label} Trend",
+                line=dict(color=trend_color, width=3, dash="dot"),
+                hovertemplate=f"<b>{view_label} Trend</b><br>{x_title}: %{{x|%Y-%m-%d}}<br>%{{y:.2f}} hours<extra></extra>"
+            ))
+
+        # Update layout with view-specific title
+        xaxis_config = dict(
+            gridcolor='rgba(102, 126, 234, 0.2)',
+            showgrid=True
+        )
+        
+        # For 7-day view, use categorical x-axis to prevent weekend gaps
+        if range_val == "7d":
+            xaxis_config['type'] = 'category'
+            xaxis_config['categoryorder'] = 'array'
+            xaxis_config['categoryarray'] = [str(d) for d in time_data[time_col]]
+        
+        # Make Weekend/Weekday SUPER prominent in title with better spacing
+        if view == "weekend":
+            title_html = f"<b>{meta.get('title')}</b><br><br><span style='font-size:28px; color:#FFC107; line-height:1.6;'>🌅 WEEKEND</span><br>Only ({stat.title()})"
+        else:
+            title_html = f"<b>{meta.get('title')}</b><br><br><span style='font-size:28px; color:#4ECDC4; line-height:1.6;'>📊 WEEKDAY</span><br>Only ({stat.title()})"
+        
         fig.update_layout(
-            title=f"{meta.get('title')} ({stat.title()})",
-            xaxis_title="Week Starting",
+            title=dict(
+                text=title_html,
+                font=dict(size=16),
+                x=0.5,
+                xanchor='center'
+            ),
+            xaxis_title=x_title,
             yaxis_title=y_title,
-            barmode="group",
-            margin=dict(l=40, r=20, t=50, b=40),
+            margin=dict(l=40, r=20, t=100, b=40),  # Increased top margin for taller title
             template="plotly_dark",
-            showlegend=True
+            showlegend=True,
+            xaxis=xaxis_config,
+            yaxis=dict(gridcolor='rgba(102, 126, 234, 0.2)', showgrid=True)
         )
         return fig
     except Exception:
@@ -794,18 +968,20 @@ def weekly_response_breakdown(params: Dict[str, Any]) -> go.Figure:
 
 
 REGISTRY["weekly_response_breakdown"]["meta"].update({
-    "description": "Weekly response-time bars with All vs Weekday vs optional Weekend series, with optional trend lines and stat toggle.",
+    "description": "Weekly response-time bars with SEPARATE scaling for weekday vs weekend. Toggle between views to avoid scale conflicts.",
     "params": {
         "source": {"type": "enum", "values": ["tickets"], "default": "tickets"},
+        "view": {"type": "enum", "values": ["weekday", "weekend"], "default": "weekday"},
         "stat": {"type": "enum", "values": ["median", "mean"], "default": "median"},
-        "range": {"type": "enum", "values": ["all", "12w", "8w"], "default": "all"},
-        "include_weekend_series": {"type": "bool", "default": False},
+        "range": {"type": "enum", "values": ["7d", "all", "ytd", "13w", "12w", "8w"], "default": "12w"},
         "show_trend": {"type": "bool", "default": True}
     },
     "examples": [
-        {"label": "Default", "query": ""},
-        {"label": "8w, include weekend", "query": "range=8w&include_weekend_series=true"},
-        {"label": "Mean with trends off", "query": "stat=mean&show_trend=false"}
+        {"label": "Default (Weekday)", "query": ""},
+        {"label": "Last 7 days", "query": "range=7d"},
+        {"label": "Weekend view", "query": "view=weekend"},
+        {"label": "Weekday, 8w range", "query": "view=weekday&range=8w"},
+        {"label": "Weekend, mean, no trend", "query": "view=weekend&stat=mean&show_trend=false"}
     ]
 })
 
@@ -823,7 +999,7 @@ def agent_ticket_volume_distribution(params: Dict[str, Any]) -> go.Figure:
     agents = _parse_list(p.get("agents"))
 
     start_dt, end_dt = compute_range_bounds(range_val, source)
-    df = _load_source_dataframe("tickets", start_dt, end_dt)
+    df = _load_source_dataframe("tickets", start_dt, end_dt, range_val)
 
     if df is None or len(df) == 0:
         return _no_data_figure(meta.get("title"), "Agent", "Tickets")
@@ -844,19 +1020,90 @@ def agent_ticket_volume_distribution(params: Dict[str, Any]) -> go.Figure:
         labels = counts[owner_col].tolist()
         values = counts["count"].tolist()
 
-        fig = make_subplots(rows=1, cols=2, column_widths=[0.65, 0.35], specs=[[{"type": "bar"}, {"type": "pie"}]], subplot_titles=("Volume (Bar)", "Share (Pie)"))
+        # Plotly's default color sequence (same as pie chart)
+        plotly_colors = [
+            '#636EFA', '#EF553B', '#00CC96', '#AB63FA', '#FFA15A',
+            '#19D3F3', '#FF6692', '#B6E880', '#FF97FF', '#FECB52'
+        ]
+        # Assign colors to match between bar and pie
+        bar_colors = [plotly_colors[i % len(plotly_colors)] for i in range(len(labels))]
 
-        fig.add_trace(go.Bar(x=labels, y=values, marker_color="rgba(78,205,196,0.85)", name="Tickets"), row=1, col=1)
-        fig.add_trace(go.Pie(labels=labels, values=values, hole=0.35, name="Share"), row=1, col=2)
+        # Calculate timeframe for display
+        if range_val == "7d":
+            days_span = 7
+            timeframe_label = "Last 7 Business Days"
+        elif range_val == "8w":
+            days_span = 56
+            timeframe_label = "Last 8 Weeks"
+        elif range_val == "12w":
+            days_span = 84
+            timeframe_label = "Last 12 Weeks"
+        elif range_val == "13w":
+            days_span = 91
+            timeframe_label = "Last Quarter"
+        elif range_val == "ytd":
+            days_span = "YTD"
+            timeframe_label = "Year to Date"
+        elif range_val == "all":
+            days_span = "All"
+            timeframe_label = "All Time"
+        else:
+            days_span = 84
+            timeframe_label = "Last 12 Weeks"
+
+        fig = make_subplots(
+            rows=1, cols=2,
+            column_widths=[0.65, 0.35],
+            specs=[[{"type": "bar"}, {"type": "pie"}]],
+            subplot_titles=(
+                f"<b>Volume (Bar)</b>",
+                f"<b>Share (Pie)</b>"
+            )
+        )
+
+        # Bar chart with matching colors
+        fig.add_trace(go.Bar(
+            x=labels,
+            y=values,
+            marker=dict(color=bar_colors),
+            name="Tickets",
+            text=[f"{v}" for v in values],
+            textposition='outside',
+            textfont=dict(size=14, color='white')
+        ), row=1, col=1)
+        
+        # Pie chart with same color sequence
+        fig.add_trace(go.Pie(
+            labels=labels,
+            values=values,
+            hole=0.35,
+            name="Share",
+            marker=dict(colors=bar_colors),  # Use same colors as bar chart
+            textfont=dict(size=16, color='white'),
+            textposition='inside',
+            textinfo='label+percent',
+            hovertemplate='<b>%{label}</b><br>Tickets: %{value}<br>%{percent}<extra></extra>'
+        ), row=1, col=2)
 
         fig.update_layout(
-            title=meta.get("title"),
+            title=dict(
+                text=f"{meta.get('title')}<br><sub>{timeframe_label} (Weekdays Only)</sub>",
+                font=dict(size=18),
+                x=0.5,
+                xanchor='center'
+            ),
             xaxis_title="Agent",
             yaxis_title="Tickets",
             template="plotly_dark",
-            margin=dict(l=40, r=20, t=60, b=40),
-            showlegend=False
+            margin=dict(l=40, r=20, t=80, b=40),
+            showlegend=False,
+            font=dict(size=14)
         )
+        
+        # Update subplot title fonts
+        for annotation in fig['layout']['annotations']:
+            annotation['font'] = dict(size=16, color='white')
+        
         return fig
     except Exception:
         return _no_data_figure(meta.get("title"), "Agent", "Tickets")
@@ -866,12 +1113,14 @@ REGISTRY["agent_ticket_volume_distribution"]["meta"].update({
     "description": "Agent ticket volumes (bar) with share (pie).",
     "params": {
         "source": {"type": "enum", "values": ["tickets"], "default": "tickets"},
-        "range": {"type": "enum", "values": ["all", "52w", "26w", "12w", "8w", "4w"], "default": "12w"},
+        "range": {"type": "enum", "values": ["7d", "8w", "12w", "13w", "ytd", "all"], "default": "12w"},
         "agents": {"type": "list[string]", "default": None}
     },
     "examples": [
         {"label": "Default", "query": ""},
-        {"label": "Last 26w", "query": "range=26w"},
+        {"label": "Last 7 days", "query": "range=7d"},
+        {"label": "Last 8 weeks", "query": "range=8w"},
+        {"label": "Quarterly", "query": "range=13w"},
         {"label": "Filter to two agents", "query": "agents=Nova,Girly"}
     ]
 })
@@ -887,12 +1136,12 @@ def agent_response_time_comparison(params: Dict[str, Any]) -> go.Figure:
 
     source = p.get("source", "tickets")
     range_val = p.get("range", "12w")
-    stat = p.get("stat", "both")  # median|mean|both
+    stat = p.get("stat", "median")  # median only (removed mean/both options)
     agents = _parse_list(p.get("agents"))
     exclude_pipelines = _parse_list(p.get("exclude_pipelines")) or ["Live Chat "]
 
     start_dt, end_dt = compute_range_bounds(range_val, source)
-    df = _load_source_dataframe("tickets", start_dt, end_dt)
+    df = _load_source_dataframe("tickets", start_dt, end_dt, range_val)
 
     y_title = "Response Time (Hours)"
     if df is None or len(df) == 0:
@@ -916,23 +1165,37 @@ def agent_response_time_comparison(params: Dict[str, Any]) -> go.Figure:
         if len(data) == 0:
             return _no_data_figure(meta.get("title"), "Agent", y_title)
 
-        by_agent = data.groupby(owner_col)["val"].agg(["mean", "median"]).reset_index()
+        by_agent = data.groupby(owner_col)["val"].agg(["median"]).reset_index()
         labels = by_agent[owner_col].tolist()
+        values = by_agent["median"].tolist()
+
+        # Plotly's default color sequence (matches pie charts)
+        plotly_colors = [
+            '#636EFA', '#EF553B', '#00CC96', '#AB63FA', '#FFA15A',
+            '#19D3F3', '#FF6692', '#B6E880', '#FF97FF', '#FECB52'
+        ]
+        
+        # Assign colors cycling through the palette
+        bar_colors = [plotly_colors[i % len(plotly_colors)] for i in range(len(labels))]
 
         fig = go.Figure()
-        if stat in ("both", "mean"):
-            fig.add_trace(go.Bar(x=labels, y=by_agent["mean"].tolist(), name="Average", marker_color="rgba(102,126,234,0.85)"))
-        if stat in ("both", "median"):
-            fig.add_trace(go.Bar(x=labels, y=by_agent["median"].tolist(), name="Median", marker_color="rgba(255,107,107,0.85)"))
+        fig.add_trace(go.Bar(
+            x=labels, 
+            y=values, 
+            name="Median Response Time",
+            text=[f"{val:.2f}h" for val in values],  # 2 decimal places
+            textposition='outside',
+            textfont=dict(size=12, color='white'),
+            marker=dict(color=bar_colors)
+        ))
 
         fig.update_layout(
             title=meta.get("title"),
             xaxis_title="Agent",
             yaxis_title=y_title,
-            barmode="group",
             template="plotly_dark",
             margin=dict(l=40, r=20, t=50, b=40),
-            showlegend=True
+            showlegend=False
         )
         return fig
     except Exception:
@@ -940,17 +1203,18 @@ def agent_response_time_comparison(params: Dict[str, Any]) -> go.Figure:
 
 
 REGISTRY["agent_response_time_comparison"]["meta"].update({
-    "description": "Grouped bars comparing Average vs Median response time per agent (excludes specified pipelines for response durations).",
+    "description": "Median response time per agent (excludes specified pipelines for response durations).",
     "params": {
         "source": {"type": "enum", "values": ["tickets"], "default": "tickets"},
-        "range": {"type": "enum", "values": ["all", "52w", "26w", "12w", "8w", "4w"], "default": "12w"},
-        "stat": {"type": "enum", "values": ["median", "mean", "both"], "default": "both"},
+        "range": {"type": "enum", "values": ["7d", "8w", "12w", "13w", "ytd", "all"], "default": "12w"},
         "agents": {"type": "list[string]", "default": None},
         "exclude_pipelines": {"type": "list[string]", "default": ["Live Chat "]}
     },
     "examples": [
         {"label": "Default", "query": ""},
-        {"label": "Median only", "query": "stat=median"},
+        {"label": "Last 7 days", "query": "range=7d"},
+        {"label": "Last 8 weeks", "query": "range=8w"},
+        {"label": "Quarterly", "query": "range=13w"},
         {"label": "Exclude Live Chat and filter agents", "query": "exclude_pipelines=Live%20Chat%20&agents=Nova,Girly"}
     ]
 })
@@ -966,36 +1230,71 @@ def chat_weekly_volume_breakdown(params: Dict[str, Any]) -> go.Figure:
 
     source = p.get("source", "chats")
     range_val = p.get("range", "12w")
+    # 7d doesn't make sense for weekly chat data, treat as 8w
+    if range_val == "7d":
+        range_val = "8w"
     series = _parse_list(p.get("series")) or ["total", "bot", "human", "trend"]
 
-    start_dt, end_dt = compute_range_bounds(range_val, source)
-    df = _load_source_dataframe("chats", start_dt, end_dt)
+    start_dt, end_dt = compute_range_bounds(range_val, "chats")
+    df = _load_source_dataframe("chats", start_dt, end_dt, range_val)
 
-    if df is None or len(df) == 0 or "chat_creation_date_adt" not in df.columns or "agent_type" not in df.columns:
+    if df is None or len(df) == 0:
+        return _no_data_figure(meta.get("title"), "Week Starting", "Chats")
+    
+    # Find the date column dynamically (might be chat_creation_date_adt or similar)
+    date_col = None
+    for col in df.columns:
+        if 'chat' in col.lower() and 'date' in col.lower():
+            date_col = col
+            break
+    
+    if date_col is None or "agent_type" not in df.columns:
         return _no_data_figure(meta.get("title"), "Week Starting", "Chats")
 
     try:
-        week = df["chat_creation_date_adt"].dt.tz_localize(None).dt.to_period("W-MON").dt.start_time
         data = df.copy()
-        data["week_start"] = week
-
-        weekly_total = data.groupby("week_start").size().reset_index(name="Total")
-        weekly_bot = data[data["agent_type"] == "bot"].groupby("week_start").size().reset_index(name="Bot")
-        weekly_human = data[data["agent_type"] == "human"].groupby("week_start").size().reset_index(name="Human")
-
-        result = weekly_total.merge(weekly_bot, on="week_start", how="left").merge(weekly_human, on="week_start", how="left").fillna(0)
-        result = result.sort_values("week_start")
+        
+        # Group by quarter for 13w (quarterly), otherwise by week
+        if range_val == "13w":
+            # Quarterly grouping
+            data["quarter"] = pd.to_datetime(data[date_col]).dt.quarter
+            data["year"] = pd.to_datetime(data[date_col]).dt.year
+            data["period_label"] = "Q" + data["quarter"].astype(str) + " " + data["year"].astype(str)
+            
+            quarterly_total = data.groupby(["year", "quarter", "period_label"]).size().reset_index(name="Total")
+            quarterly_bot = data[data["agent_type"] == "bot"].groupby(["year", "quarter", "period_label"]).size().reset_index(name="Bot")
+            quarterly_human = data[data["agent_type"] == "human"].groupby(["year", "quarter", "period_label"]).size().reset_index(name="Human")
+            
+            result = quarterly_total.merge(quarterly_bot, on=["year", "quarter", "period_label"], how="left").merge(quarterly_human, on=["year", "quarter", "period_label"], how="left").fillna(0)
+            result = result.sort_values(["year", "quarter"])
+            # Keep only last 4 quarters
+            result = result.tail(4)
+            time_col = "period_label"
+            x_title = "Quarter"
+        else:
+            # Weekly grouping
+            week = pd.to_datetime(data[date_col]).dt.tz_localize(None).dt.to_period("W-MON").dt.start_time
+            data["week_start"] = week
+            
+            weekly_total = data.groupby("week_start").size().reset_index(name="Total")
+            weekly_bot = data[data["agent_type"] == "bot"].groupby("week_start").size().reset_index(name="Bot")
+            weekly_human = data[data["agent_type"] == "human"].groupby("week_start").size().reset_index(name="Human")
+            
+            result = weekly_total.merge(weekly_bot, on="week_start", how="left").merge(weekly_human, on="week_start", how="left").fillna(0)
+            result = result.sort_values("week_start")
+            time_col = "week_start"
+            x_title = "Week Starting"
 
         if len(result) == 0:
-            return _no_data_figure(meta.get("title"), "Week Starting", "Chats")
+            return _no_data_figure(meta.get("title"), x_title, "Chats")
 
         fig = go.Figure()
         if "total" in series:
-            fig.add_trace(go.Bar(x=result["week_start"], y=result["Total"], name="Total", marker_color="rgba(78,205,196,0.85)"))
+            fig.add_trace(go.Bar(x=result[time_col], y=result["Total"], name="Total", marker_color="rgba(78,205,196,0.85)"))
         if "bot" in series:
-            fig.add_trace(go.Bar(x=result["week_start"], y=result["Bot"], name="Bot", marker_color="rgba(162,155,254,0.85)"))
+            fig.add_trace(go.Bar(x=result[time_col], y=result["Bot"], name="Bot", marker_color="rgba(162,155,254,0.85)"))
         if "human" in series:
-            fig.add_trace(go.Bar(x=result["week_start"], y=result["Human"], name="Human", marker_color="rgba(255,107,107,0.85)"))
+            fig.add_trace(go.Bar(x=result[time_col], y=result["Human"], name="Human", marker_color="rgba(255,107,107,0.85)"))
 
         if "trend" in series and len(result) > 1 and "total" in series:
             import numpy as np
@@ -1003,11 +1302,11 @@ def chat_weekly_volume_breakdown(params: Dict[str, Any]) -> go.Figure:
             y = pd.to_numeric(result["Total"], errors="coerce")
             if y.notna().sum() > 1:
                 m, b = np.polyfit(x[y.notna()], y.dropna(), 1)
-                fig.add_trace(go.Scatter(x=result["week_start"], y=m * x + b, mode="lines", name="Total Trend", line=dict(color="rgba(0,212,170,1)", width=3)))
+                fig.add_trace(go.Scatter(x=result[time_col], y=m * x + b, mode="lines", name="Total Trend", line=dict(color="rgba(0,212,170,1)", width=3)))
 
         fig.update_layout(
             title=meta.get("title"),
-            xaxis_title="Week Starting",
+            xaxis_title=x_title,
             yaxis_title="Chats",
             barmode="group",
             template="plotly_dark",
@@ -1020,15 +1319,18 @@ def chat_weekly_volume_breakdown(params: Dict[str, Any]) -> go.Figure:
 
 
 REGISTRY["chat_weekly_volume_breakdown"]["meta"].update({
-    "description": "Weekly total chats with bot and human breakdown bars and total trend line.",
+    "description": "Weekly/Quarterly total chats with bot and human breakdown bars and total trend line.",
     "params": {
         "source": {"type": "enum", "values": ["chats"], "default": "chats"},
-        "range": {"type": "enum", "values": ["all", "52w", "26w", "12w", "8w", "4w"], "default": "12w"},
+        "range": {"type": "enum", "values": ["8w", "12w", "13w", "ytd", "all"], "default": "12w"},
         "series": {"type": "list[enum]", "values": ["total", "bot", "human", "trend"], "default": ["total", "bot", "human", "trend"]}
     },
     "examples": [
         {"label": "Default", "query": ""},
-        {"label": "Last 26w, total+trend only", "query": "range=26w&series=total,trend"}
+        {"label": "Last 8 weeks", "query": "range=8w"},
+        {"label": "Quarterly (4 quarters)", "query": "range=13w"},
+        {"label": "Year to date", "query": "range=ytd"},
+        {"label": "8w, total+trend only", "query": "range=8w&series=total,trend"}
     ]
 })
 
@@ -1037,6 +1339,14 @@ REGISTRY["chat_weekly_volume_breakdown"]["meta"].update({
 # --------------------------------------------------------------------
 @register("weekly_bot_satisfaction", title="Weekly Bot Satisfaction")
 def weekly_bot_satisfaction(params: Dict[str, Any]) -> go.Figure:
+    """
+    Bot satisfaction using LiveChat Reports API.
+    
+    The Reports API provides daily aggregates of good/bad ratings.
+    - 7d: Shows last 7 days (daily bars)
+    - 13w: Shows last 4 quarters (quarterly bars)
+    - Other ranges: Weekly bars
+    """
     meta = REGISTRY["weekly_bot_satisfaction"]["meta"]
     schema = meta.get("params", {})
     p = normalize_params(params or {}, schema)
@@ -1045,25 +1355,127 @@ def weekly_bot_satisfaction(params: Dict[str, Any]) -> go.Figure:
     range_val = p.get("range", "12w")
 
     start_dt, end_dt = compute_range_bounds(range_val, source)
-    df = _load_source_dataframe("chats", start_dt, end_dt)
-
-    if df is None or len(df) == 0 or "chat_creation_date_adt" not in df.columns or "agent_type" not in df.columns or "rating_value" not in df.columns or "has_rating" not in df.columns:
-        return _no_data_figure(meta.get("title"), "Week Starting", "Satisfaction (%)")
+    
+    if start_dt is None:
+        start_dt = datetime.now(pytz.UTC) - timedelta(weeks=12)
+    if end_dt is None:
+        end_dt = datetime.now(pytz.UTC)
 
     try:
-        rated = df[(df["agent_type"] == "bot") & (df["has_rating"] == True)].copy()
-        if len(rated) == 0:
-            return _no_data_figure(meta.get("title"), "Week Starting", "Satisfaction (%)")
-        rated["week_start"] = rated["chat_creation_date_adt"].dt.tz_localize(None).dt.to_period("W-MON").dt.start_time
-        # Convert 1–5 scale to 0–100%
-        rated["satisfaction_pct"] = pd.to_numeric(rated["rating_value"], errors="coerce").map(lambda v: None if pd.isna(v) else (v - 1) / 4 * 100)
-        weekly = rated.groupby("week_start")["satisfaction_pct"].mean().reset_index()
+        # Import the ratings fetcher
+        import os
+        from livechat_ratings_fetcher import LiveChatRatingsFetcher
+        
+        # Get credentials
+        pat = os.environ.get('LIVECHAT_PAT')
+        if not pat:
+            print("ERROR: LIVECHAT_PAT environment variable not set")
+            return _no_data_figure(meta.get("title"), "Date", "Satisfaction (%)")
+        
+        if ':' in pat:
+            username, password = pat.split(':', 1)
+        else:
+            username, password = pat, ''
+        
+        # Fetch ratings from Reports API
+        fetcher = LiveChatRatingsFetcher(username, password)
+        ratings_data = fetcher.fetch_ratings(
+            from_date=start_dt.replace(tzinfo=None),
+            to_date=end_dt.replace(tzinfo=None),
+            distribution="day"
+        )
+        
+        if not ratings_data or 'records' not in ratings_data:
+            print("No ratings data returned from Reports API")
+            return _no_data_figure(meta.get("title"), "Date", "Satisfaction (%)")
+        
+        # Convert daily ratings to DataFrame
+        records = ratings_data['records']
+        daily_data = []
+        for date_str, data in records.items():
+            good = data.get('good', 0)
+            bad = data.get('bad', 0)
+            total = good + bad
+            
+            if total > 0:
+                # Calculate satisfaction rate: good / (good + bad) * 100
+                satisfaction_pct = (good / total) * 100
+                daily_data.append({
+                    'date': pd.to_datetime(date_str),
+                    'good': good,
+                    'bad': bad,
+                    'total': total,
+                    'satisfaction_pct': satisfaction_pct
+                })
+        
+        if not daily_data:
+            print("No rated chats found in the specified period")
+            return _no_data_figure(meta.get("title"), "Date", "Satisfaction (%)")
+        
+        # Create DataFrame
+        df = pd.DataFrame(daily_data)
+        df = df.sort_values('date')
+        
+        # Aggregate based on range_val
+        if range_val == "7d":
+            # Daily view - last 7 days (already have daily data, just take last 7)
+            result = df.tail(7).copy()
+            result['period_label'] = result['date'].dt.strftime('%b %d')
+            result['total_ratings'] = result['total']  # Add total_ratings column for consistency
+            x_col = 'period_label'
+            x_title = 'Date'
+            title_suffix = '(Last 7 Days)'
+        elif range_val == "13w":
+            # Quarterly view - last 4 quarters
+            df['quarter'] = df['date'].dt.quarter
+            df['year'] = df['date'].dt.year
+            df['quarter_label'] = 'Q' + df['quarter'].astype(str) + ' ' + df['year'].astype(str)
+            
+            quarterly = df.groupby(['year', 'quarter', 'quarter_label']).apply(
+                lambda x: pd.Series({
+                    'satisfaction_pct': (x['good'].sum() / x['total'].sum() * 100) if x['total'].sum() > 0 else 0,
+                    'total_ratings': x['total'].sum()
+                })
+            ).reset_index()
+            quarterly = quarterly.sort_values(['year', 'quarter'])
+            result = quarterly.tail(4)  # Last 4 quarters
+            x_col = 'quarter_label'
+            x_title = 'Quarter'
+            title_suffix = '(Last 4 Quarters)'
+        else:
+            # Weekly view (default)
+            df['week_start'] = df['date'].dt.to_period('W-MON').dt.start_time
+            
+            weekly = df.groupby('week_start').apply(
+                lambda x: pd.Series({
+                    'satisfaction_pct': (x['good'].sum() / x['total'].sum() * 100) if x['total'].sum() > 0 else 0,
+                    'total_ratings': x['total'].sum()
+                })
+            ).reset_index()
+            result = weekly
+            x_col = 'week_start'
+            x_title = 'Week Starting'
+            title_suffix = f'({range_val.upper()})'
+        
+        if len(result) == 0:
+            return _no_data_figure(meta.get("title"), x_title, "Satisfaction (%)")
+        
+        print(f"Successfully created chart with {len(result)} periods of ratings data")
+        print(f"Total ratings: {result['total_ratings'].sum() if 'total_ratings' in result.columns else 'N/A'}")
 
         fig = go.Figure()
-        fig.add_trace(go.Bar(x=weekly["week_start"], y=weekly["satisfaction_pct"], name="Bot Satisfaction (%)", marker_color="rgba(162,155,254,0.85)"))
+        fig.add_trace(go.Bar(
+            x=result[x_col],
+            y=result["satisfaction_pct"],
+            name="Bot Satisfaction (%)",
+            marker_color="rgba(162,155,254,0.85)",
+            text=[f"{val:.1f}%" for val in result["satisfaction_pct"]],
+            textposition='outside',
+            hovertemplate='<b>%{x}</b><br>Satisfaction: %{y:.1f}%<br><extra></extra>'
+        ))
         fig.update_layout(
-            title=meta.get("title"),
-            xaxis_title="Week Starting",
+            title=f"{meta.get('title')} {title_suffix}",
+            xaxis_title=x_title,
             yaxis_title="Satisfaction Rate (%)",
             template="plotly_dark",
             margin=dict(l=40, r=20, t=50, b=40),
@@ -1071,19 +1483,24 @@ def weekly_bot_satisfaction(params: Dict[str, Any]) -> go.Figure:
             yaxis=dict(range=[0, 100])
         )
         return fig
-    except Exception:
-        return _no_data_figure(meta.get("title"), "Week Starting", "Satisfaction (%)")
+    except Exception as e:
+        print(f"ERROR in weekly_bot_satisfaction: {e}")
+        import traceback
+        traceback.print_exc()
+        return _no_data_figure(meta.get("title"), "Date", "Satisfaction (%)")
 
 
 REGISTRY["weekly_bot_satisfaction"]["meta"].update({
-    "description": "Weekly satisfaction rate (%) for bot-handled chats.",
+    "description": "Bot satisfaction rate - daily (7d), quarterly (13w), or weekly views.",
     "params": {
         "source": {"type": "enum", "values": ["chats"], "default": "chats"},
-        "range": {"type": "enum", "values": ["all", "52w", "26w", "12w", "8w", "4w"], "default": "12w"},
+        "range": {"type": "enum", "values": ["7d", "all", "52w", "26w", "13w", "12w", "8w", "4w"], "default": "12w"},
     },
     "examples": [
-        {"label": "Default", "query": ""},
-        {"label": "52w", "query": "range=52w"}
+        {"label": "Default (12w)", "query": ""},
+        {"label": "Last 7 days", "query": "range=7d"},
+        {"label": "Quarterly (4 quarters)", "query": "range=13w"},
+        {"label": "52 weeks", "query": "range=52w"}
     ]
 })
 
@@ -1098,10 +1515,13 @@ def bot_volume_duration(params: Dict[str, Any]) -> go.Figure:
 
     source = p.get("source", "chats")
     range_val = p.get("range", "12w")
+    # 7d doesn't make sense for bot volume/duration, treat as 8w
+    if range_val == "7d":
+        range_val = "8w"
     bots = _parse_list(p.get("bots"))
 
     start_dt, end_dt = compute_range_bounds(range_val, source)
-    df = _load_source_dataframe("chats", start_dt, end_dt)
+    df = _load_source_dataframe("chats", start_dt, end_dt, range_val)
 
     if df is None or len(df) == 0 or "agent_type" not in df.columns or "display_agent" not in df.columns or "duration_minutes" not in df.columns or "chat_creation_date_adt" not in df.columns:
         return _no_data_figure(meta.get("title"), "Bot", "Value")
@@ -1118,8 +1538,24 @@ def bot_volume_duration(params: Dict[str, Any]) -> go.Figure:
         labels = stats["display_agent"].tolist()
 
         fig = make_subplots(rows=1, cols=2, subplot_titles=("Volume", "Avg Duration (min)"))
-        fig.add_trace(go.Bar(x=labels, y=stats["total_chats"], name="Volume", marker_color="rgba(162,155,254,0.85)"), row=1, col=1)
-        fig.add_trace(go.Bar(x=labels, y=stats["avg_duration"], name="Duration", marker_color="rgba(78,205,196,0.85)"), row=1, col=2)
+        fig.add_trace(go.Bar(
+            x=labels, 
+            y=stats["total_chats"], 
+            name="Volume", 
+            marker_color="rgba(162,155,254,0.85)",
+            text=[f"{v}" for v in stats["total_chats"]],
+            textposition='outside',
+            textfont=dict(size=12, color='white')
+        ), row=1, col=1)
+        fig.add_trace(go.Bar(
+            x=labels, 
+            y=stats["avg_duration"], 
+            name="Duration", 
+            marker_color="rgba(78,205,196,0.85)",
+            text=[f"{v:.1f}" for v in stats["avg_duration"]],
+            textposition='outside',
+            textfont=dict(size=12, color='white')
+        ), row=1, col=2)
         fig.update_layout(
             title=meta.get("title"),
             template="plotly_dark",
@@ -1135,11 +1571,13 @@ REGISTRY["bot_volume_duration"]["meta"].update({
     "description": "Side-by-side bars for bot chat volumes and average duration per bot.",
     "params": {
         "source": {"type": "enum", "values": ["chats"], "default": "chats"},
-        "range": {"type": "enum", "values": ["all", "52w", "26w", "12w", "8w", "4w"], "default": "12w"},
+        "range": {"type": "enum", "values": ["8w", "12w", "13w", "ytd", "all"], "default": "12w"},
         "bots": {"type": "list[string]", "default": None}
     },
     "examples": [
         {"label": "Default", "query": ""},
+        {"label": "Last 8 weeks", "query": "range=8w"},
+        {"label": "Quarterly", "query": "range=13w"},
         {"label": "Filter bots", "query": "bots=Wynn%20AI,Agent%20Scrape"}
     ]
 })
@@ -1155,33 +1593,131 @@ def human_volume_duration(params: Dict[str, Any]) -> go.Figure:
 
     source = p.get("source", "chats")
     range_val = p.get("range", "12w")
+    # 7d doesn't make sense for human volume/duration, treat as 8w
+    if range_val == "7d":
+        range_val = "8w"
     agents = _parse_list(p.get("agents"))
 
     start_dt, end_dt = compute_range_bounds(range_val, source)
-    df = _load_source_dataframe("chats", start_dt, end_dt)
+    df = _load_source_dataframe("chats", start_dt, end_dt, range_val)
 
-    if df is None or len(df) == 0 or "agent_type" not in df.columns or "primary_agent" not in df.columns or "duration_minutes" not in df.columns:
+    print(f"DEBUG human_volume_duration: Loaded {len(df) if df is not None else 0} total chat records for range {range_val}")
+    
+    if df is None or len(df) == 0:
+        print("DEBUG: No data loaded")
+        return _no_data_figure(meta.get("title"), "Agent", "Value")
+    
+    print(f"DEBUG: Columns in df: {df.columns.tolist()}")
+    
+    if "agent_type" not in df.columns or "primary_agent" not in df.columns or "duration_minutes" not in df.columns:
+        print(f"DEBUG: Missing required columns")
         return _no_data_figure(meta.get("title"), "Agent", "Value")
 
     try:
-        # For simplicity, count by primary agent; secondary contributions may be minimal for this view
-        data = df[df["agent_type"] == "human"].copy()
-        if agents:
-            data = data[data["primary_agent"].isin(agents)]
+        data = df.copy()
+        
+        # Name mapping for all variations
+        name_mapping = {
+            # Girly variations
+            "gillie": "Girly",
+            "gillie e": "Girly",
+            "girly": "Girly",
+            "girly e": "Girly",
+            # Nova variations
+            "nora": "Nova",
+            "nora n": "Nova",
+            "nova": "Nova",
+            # Bhushan variations
+            "shan": "Bhushan",
+            "shan d": "Bhushan",
+            "bhushan": "Bhushan",
+            # Francis variations
+            "chris": "Francis",
+            "chris s": "Francis",
+            "francis": "Francis"
+        }
+        
+        # The human agent names are in the 'human_agents' column!
+        # This column can contain comma-separated values like "Chris,Gillie" or single values like "Shan"
+        if 'human_agents' not in data.columns:
+            return _no_data_figure(meta.get("title"), "Agent", "Value")
+        
+        # Filter to rows that have human agents
+        data = data[data['human_agents'].notna() & (data['human_agents'] != '')].copy()
+        
         if len(data) == 0:
             return _no_data_figure(meta.get("title"), "Agent", "Value")
+        
+        # Explode the human_agents column (split comma-separated values into separate rows)
+        # This way "Chris,Gillie" becomes two rows: one for Chris, one for Gillie
+        data['human_agent_list'] = data['human_agents'].str.split(',')
+        data = data.explode('human_agent_list')
+        data['human_agent_lower'] = data['human_agent_list'].str.lower().str.strip()
+        
+        # Filter to only our 4 real human agents
+        data = data[data['human_agent_lower'].isin(name_mapping.keys())].copy()
+        
+        if len(data) == 0:
+            return _no_data_figure(meta.get("title"), "Agent", "Value")
+        
+        # Map to display names
+        data['display_name'] = data['human_agent_lower'].map(name_mapping)
+        
+        if agents:
+            # If filtering by agents, use real names
+            data = data[data["display_name"].isin(agents)]
+        if len(data) == 0:
+            print("DEBUG: No data after filtering")
+            return _no_data_figure(meta.get("title"), "Agent", "Value")
 
-        stats = data.groupby("primary_agent").agg(total_chats=("primary_agent", "size"), avg_duration=("duration_minutes", "mean")).reset_index()
+        # Fix aggregation - use size() which counts rows per group
+        stats = data.groupby("display_name", as_index=False).agg({
+            "duration_minutes": ["count", "mean"]
+        })
+        stats.columns = ["display_name", "total_chats", "avg_duration"]
         stats = stats.sort_values("total_chats", ascending=False)
-        labels = stats["primary_agent"].tolist()
+        print(f"DEBUG: Final stats:\n{stats}")
+        labels = stats["display_name"].tolist()
 
-        fig = make_subplots(rows=1, cols=2, subplot_titles=("Volume", "Avg Duration (min)"))
-        fig.add_trace(go.Bar(x=labels, y=stats["total_chats"], name="Volume", marker_color="rgba(255,107,107,0.85)"), row=1, col=1)
-        fig.add_trace(go.Bar(x=labels, y=stats["avg_duration"], name="Duration", marker_color="rgba(253,121,168,0.85)"), row=1, col=2)
+        # Create completely separate charts stacked vertically for independent scaling
+        fig = make_subplots(
+            rows=2, cols=1,
+            subplot_titles=("Chat Volume by Agent", "Avg Duration (min) by Agent"),
+            vertical_spacing=0.15
+        )
+        
+        # Top chart: Volume
+        fig.add_trace(go.Bar(
+            x=labels,
+            y=stats["total_chats"],
+            name="Volume",
+            marker_color="rgba(255,107,107,0.85)",
+            text=[f"{v}" for v in stats["total_chats"]],
+            textposition='outside',
+            textfont=dict(size=12, color='white')
+        ), row=1, col=1)
+        
+        # Bottom chart: Duration
+        fig.add_trace(go.Bar(
+            x=labels,
+            y=stats["avg_duration"],
+            name="Avg Duration",
+            marker_color="rgba(253,121,168,0.85)",
+            text=[f"{v:.1f}" for v in stats["avg_duration"]],
+            textposition='outside',
+            textfont=dict(size=12, color='white')
+        ), row=2, col=1)
+        
+        # Set Y-axis labels
+        fig.update_yaxes(title_text="Chats", row=1, col=1)
+        fig.update_yaxes(title_text="Minutes", row=2, col=1)
+        fig.update_xaxes(title_text="Agent", row=2, col=1)
+        
         fig.update_layout(
             title=meta.get("title"),
             template="plotly_dark",
-            margin=dict(l=40, r=20, t=60, b=40),
+            height=600,  # Taller to accommodate two charts
+            margin=dict(l=40, r=20, t=80, b=40),
             showlegend=False
         )
         return fig
@@ -1193,92 +1729,18 @@ REGISTRY["human_volume_duration"]["meta"].update({
     "description": "Side-by-side bars for human chat volumes and average duration per agent.",
     "params": {
         "source": {"type": "enum", "values": ["chats"], "default": "chats"},
-        "range": {"type": "enum", "values": ["all", "52w", "26w", "12w", "8w", "4w"], "default": "12w"},
+        "range": {"type": "enum", "values": ["8w", "12w", "13w", "ytd", "all"], "default": "12w"},
         "agents": {"type": "list[string]", "default": None}
     },
     "examples": [
         {"label": "Default", "query": ""},
+        {"label": "Last 8 weeks", "query": "range=8w"},
+        {"label": "Quarterly", "query": "range=13w"},
         {"label": "Filter agents", "query": "agents=Nova,Girly"}
     ]
 })
 
-# --------------------------------------------------------------------
-# 11) bot_performance_comparison
-# --------------------------------------------------------------------
-@register("bot_performance_comparison", title="Bot Performance Comparison")
-def bot_performance_comparison(params: Dict[str, Any]) -> go.Figure:
-    meta = REGISTRY["bot_performance_comparison"]["meta"]
-    schema = meta.get("params", {})
-    p = normalize_params(params or {}, schema)
-
-    source = p.get("source", "chats")
-    range_val = p.get("range", "12w")
-    bots = _parse_list(p.get("bots"))
-
-    start_dt, end_dt = compute_range_bounds(range_val, source)
-    df = _load_source_dataframe("chats", start_dt, end_dt)
-
-    if df is None or len(df) == 0 or "agent_type" not in df.columns or "display_agent" not in df.columns:
-        return _no_data_figure(meta.get("title"), "Bot", "Value")
-
-    try:
-        data = df[df["agent_type"] == "bot"].copy()
-        if bots:
-            data = data[data["display_agent"].isin(bots)]
-        if len(data) == 0:
-            return _no_data_figure(meta.get("title"), "Bot", "Value")
-
-        # Compute stats
-        rated = data[data["has_rating"] == True].copy() if "has_rating" in data.columns else data.iloc[0:0].copy()
-        # 1–5 -> 0–100%
-        if "rating_value" in rated.columns:
-            rated["sat_pct"] = pd.to_numeric(rated["rating_value"], errors="coerce").map(lambda v: None if pd.isna(v) else (v - 1) / 4 * 100)
-        else:
-            rated["sat_pct"] = pd.Series(dtype=float)
-
-        vol = data.groupby("display_agent").size().reset_index(name="total")
-        sat = rated.groupby("display_agent")["sat_pct"].mean().reset_index()
-        merged = vol.merge(sat, on="display_agent", how="left").fillna({"sat_pct": 0})
-        merged = merged.sort_values("total", ascending=False)
-
-        labels = merged["display_agent"].tolist()
-        volumes = merged["total"].tolist()
-        sats = merged["sat_pct"].tolist()
-
-        fig = make_subplots(rows=1, cols=2, column_widths=[0.65, 0.35], specs=[[{"secondary_y": True}, {"type": "pie"}]], subplot_titles=("Volume vs Satisfaction", "Distribution"))
-
-        # Volume bars
-        fig.add_trace(go.Bar(x=labels, y=volumes, name="Volume", marker_color="rgba(162,155,254,0.85)"), row=1, col=1)
-        # Satisfaction line on secondary y
-        fig.add_trace(go.Scatter(x=labels, y=sats, mode="lines+markers", name="Satisfaction (%)", line=dict(color="rgba(255,234,167,1)", width=3)), row=1, col=1, secondary_y=True)
-        # Pie
-        fig.add_trace(go.Pie(labels=labels, values=volumes, hole=0.35, name="Share"), row=1, col=2)
-
-        fig.update_yaxes(title_text="Chats", row=1, col=1, secondary_y=False)
-        fig.update_yaxes(title_text="Satisfaction (%)", row=1, col=1, secondary_y=True, range=[0, 100])
-        fig.update_layout(
-            title=meta.get("title"),
-            template="plotly_dark",
-            margin=dict(l=40, r=20, t=60, b=40),
-            showlegend=False
-        )
-        return fig
-    except Exception:
-        return _no_data_figure(meta.get("title"), "Bot", "Value")
-
-
-REGISTRY["bot_performance_comparison"]["meta"].update({
-    "description": "Composite chart – bot volume (bars), satisfaction rate (line, secondary axis), and pie distribution.",
-    "params": {
-        "source": {"type": "enum", "values": ["chats"], "default": "chats"},
-        "range": {"type": "enum", "values": ["all", "52w", "26w", "12w", "8w", "4w"], "default": "12w"},
-        "bots": {"type": "list[string]", "default": None}
-    },
-    "examples": [
-        {"label": "Default", "query": ""},
-        {"label": "Filter bots", "query": "bots=Agent%20Scrape"}
-    ]
-})
+# REMOVED: bot_performance_comparison - useless composite chart
 
 # --------------------------------------------------------------------
 # 12) daily_chat_trends_performance
@@ -1293,7 +1755,7 @@ def daily_chat_trends_performance(params: Dict[str, Any]) -> go.Figure:
     range_val = p.get("range", "12w")
 
     start_dt, end_dt = compute_range_bounds(range_val, source)
-    df = _load_source_dataframe("chats", start_dt, end_dt)
+    df = _load_source_dataframe("chats", start_dt, end_dt, range_val)
 
     if df is None or len(df) == 0 or "chat_creation_date_adt" not in df.columns:
         return _no_data_figure(meta.get("title"), "Date", "Count")
@@ -1358,7 +1820,7 @@ def agent_weekly_response_by_agent(params: Dict[str, Any]) -> go.Figure:
     stat = p.get("stat", "median")
 
     start_dt, end_dt = compute_range_bounds(range_val, source)
-    df = _load_source_dataframe("tickets", start_dt, end_dt)
+    df = _load_source_dataframe("tickets", start_dt, end_dt, range_val)
 
     y_title = "Median Response Time (Hours)"
     if df is None or len(df) == 0:
@@ -1431,7 +1893,7 @@ def agent_weekly_ticket_volume_by_agent(params: Dict[str, Any]) -> go.Figure:
     agents = _parse_list(p.get("agents"))
 
     start_dt, end_dt = compute_range_bounds(range_val, source)
-    df = _load_source_dataframe("tickets", start_dt, end_dt)
+    df = _load_source_dataframe("tickets", start_dt, end_dt, range_val)
 
     if df is None or len(df) == 0:
         return _no_data_figure(meta.get("title"), "Week Starting", "Tickets")
@@ -1483,7 +1945,7 @@ REGISTRY["agent_weekly_ticket_volume_by_agent"]["meta"].update({
 # --------------------------------------------------------------------
 # 15) performance_vs_volume
 # --------------------------------------------------------------------
-@register("performance_vs_volume", title="Agent Performance vs Volume")
+@register("performance_vs_volume", title="Agent Volume Comparison")
 def performance_vs_volume(params: Dict[str, Any]) -> go.Figure:
     meta = REGISTRY["performance_vs_volume"]["meta"]
     schema = meta.get("params", {})
@@ -1494,78 +1956,80 @@ def performance_vs_volume(params: Dict[str, Any]) -> go.Figure:
     agents = _parse_list(p.get("agents"))
 
     start_dt, end_dt = compute_range_bounds(range_val, source)
-    df = _load_source_dataframe("tickets", start_dt, end_dt)
+    df = _load_source_dataframe("tickets", start_dt, end_dt, range_val)
 
     if df is None or len(df) == 0:
-        return _no_data_figure(meta.get("title"), "Agent", "Value")
+        return _no_data_figure(meta.get("title"), "Agent", "Tickets")
 
     try:
         owner_col = _detect_owner_column(df)
-        if owner_col is None or "First Response Time (Hours)" not in df.columns:
-            return _no_data_figure(meta.get("title"), "Agent", "Value")
+        if owner_col is None:
+            return _no_data_figure(meta.get("title"), "Agent", "Tickets")
 
         data = df.copy()
+        
+        # Filter out test user
+        if owner_col in data.columns:
+            data = data[~data[owner_col].str.lower().str.contains('test', na=False)]
+        
         if agents:
             data = data[data[owner_col].isin(agents)]
 
-        vals = _safe_hour_series(data["First Response Time (Hours)"])
-        data = data.assign(val=vals)
-        data = data[data["val"].notna() & (data["val"] > 0)]
-
         if len(data) == 0:
-            return _no_data_figure(meta.get("title"), "Agent", "Value")
+            return _no_data_figure(meta.get("title"), "Agent", "Tickets")
 
-        stats = data.groupby(owner_col).agg(
-            median_response=("val", "median"),
-            total_tickets=(owner_col, "size"),
-        ).reset_index()
-        stats = stats.sort_values("total_tickets", ascending=False)
-        labels = stats[owner_col].tolist()
+        # Simple volume counts by agent
+        volume_stats = data.groupby(owner_col).size().reset_index(name='total_tickets')
+        volume_stats = volume_stats.sort_values("total_tickets", ascending=False)
 
-        fig = make_subplots(specs=[[{"secondary_y": True}]])
-        fig.add_trace(
-            go.Bar(
-                x=labels,
-                y=stats["median_response"],
-                name="Median Response (h)",
-                marker_color="rgba(255,107,107,0.85)",
-            ),
-            secondary_y=False,
-        )
-        fig.add_trace(
-            go.Scatter(
-                x=labels,
-                y=stats["total_tickets"],
-                mode="lines+markers",
-                name="Total Tickets",
-                line=dict(color="rgba(102,126,234,1)", width=3),
-            ),
-            secondary_y=True,
-        )
+        # Use Plotly's default color sequence (matches pie charts and other widgets)
+        plotly_colors = [
+            '#636EFA', '#EF553B', '#00CC96', '#AB63FA', '#FFA15A',
+            '#19D3F3', '#FF6692', '#B6E880', '#FF97FF', '#FECB52'
+        ]
+        n_agents = len(volume_stats)
+        colors = [plotly_colors[i % len(plotly_colors)] for i in range(n_agents)]
+
+        labels = volume_stats[owner_col].tolist()
+        values = volume_stats['total_tickets'].tolist()
+
+        fig = go.Figure()
+        fig.add_trace(go.Bar(
+            x=labels,
+            y=values,
+            name="Ticket Volume",
+            marker=dict(color=colors),
+            text=[f"{v}" for v in values],
+            textposition='outside',
+            textfont=dict(size=12, color='white'),
+            hovertemplate='<b>%{x}</b><br>Tickets: %{y}<br><extra></extra>',
+        ))
 
         fig.update_layout(
-            title=meta.get("title"),
+            title="Agent Volume Comparison",
+            xaxis_title="Agent",
+            yaxis_title="Total Tickets",
             template="plotly_dark",
             margin=dict(l=40, r=20, t=50, b=40),
-            showlegend=True,
+            showlegend=False,
         )
-        fig.update_xaxes(title_text="Agent")
-        fig.update_yaxes(title_text="Median Response (h)", secondary_y=False)
-        fig.update_yaxes(title_text="Total Tickets", secondary_y=True)
         return fig
     except Exception:
-        return _no_data_figure(meta.get("title"), "Agent", "Value")
+        return _no_data_figure(meta.get("title"), "Agent", "Tickets")
 
 
 REGISTRY["performance_vs_volume"]["meta"].update({
-    "description": "Dual-axis chart – median response time (bars) vs total tickets (line) per agent.",
+    "description": "Agent volume comparison with Plotly colors, ranked by ticket count. Filters out test users.",
     "params": {
         "source": {"type": "enum", "values": ["tickets"], "default": "tickets"},
-        "range": {"type": "enum", "values": ["all", "12w", "8w"], "default": "12w"},
+        "range": {"type": "enum", "values": ["7d", "8w", "12w", "13w", "ytd", "all"], "default": "12w"},
         "agents": {"type": "list[string]", "default": None}
     },
     "examples": [
         {"label": "Default", "query": ""},
+        {"label": "Last 7 days", "query": "range=7d"},
+        {"label": "Last 8 weeks", "query": "range=8w"},
+        {"label": "Quarterly", "query": "range=13w"},
         {"label": "8w subset", "query": "range=8w&agents=Nova,Girly"}
     ]
 })
@@ -1585,7 +2049,7 @@ def pipeline_distribution_by_agent(params: Dict[str, Any]) -> go.Figure:
     pipelines = _parse_list(p.get("pipelines"))
 
     start_dt, end_dt = compute_range_bounds(range_val, source)
-    df = _load_source_dataframe("tickets", start_dt, end_dt)
+    df = _load_source_dataframe("tickets", start_dt, end_dt, range_val)
 
     if df is None or len(df) == 0:
         return _no_data_figure(meta.get("title"), "Agent", "Tickets")
@@ -1596,6 +2060,11 @@ def pipeline_distribution_by_agent(params: Dict[str, Any]) -> go.Figure:
             return _no_data_figure(meta.get("title"), "Agent", "Tickets")
 
         data = df.copy()
+        
+        # Filter out test user
+        if owner_col in data.columns:
+            data = data[~data[owner_col].str.lower().str.contains('test', na=False)]
+        
         if agents:
             data = data[data[owner_col].isin(agents)]
         if pipelines:
@@ -1636,15 +2105,18 @@ def pipeline_distribution_by_agent(params: Dict[str, Any]) -> go.Figure:
 
 
 REGISTRY["pipeline_distribution_by_agent"]["meta"].update({
-    "description": "Stacked bars of ticket counts by pipeline per agent.",
+    "description": "Stacked bars of ticket counts by pipeline per agent. Filters out test users.",
     "params": {
         "source": {"type": "enum", "values": ["tickets"], "default": "tickets"},
-        "range": {"type": "enum", "values": ["all", "12w", "8w"], "default": "12w"},
+        "range": {"type": "enum", "values": ["7d", "8w", "12w", "13w", "ytd", "all"], "default": "12w"},
         "agents": {"type": "list[string]", "default": None},
         "pipelines": {"type": "list[string]", "default": None}
     },
     "examples": [
         {"label": "Default", "query": ""},
+        {"label": "Last 7 days", "query": "range=7d"},
+        {"label": "Last 8 weeks", "query": "range=8w"},
+        {"label": "Quarterly", "query": "range=13w"},
         {"label": "8w filter agents", "query": "range=8w&agents=Nova,Girly"}
     ]
 })
@@ -1665,7 +2137,7 @@ def pipeline_response_time_heatmap(params: Dict[str, Any]) -> go.Figure:
     stat = p.get("stat", "median")  # currently only median supported
 
     start_dt, end_dt = compute_range_bounds(range_val, source)
-    df = _load_source_dataframe("tickets", start_dt, end_dt)
+    df = _load_source_dataframe("tickets", start_dt, end_dt, range_val)
 
     y_title = "Agent"
     if df is None or len(df) == 0:
@@ -1724,13 +2196,161 @@ REGISTRY["pipeline_response_time_heatmap"]["meta"].update({
     "description": "Heatmap of median response time (hours) by agent × pipeline.",
     "params": {
         "source": {"type": "enum", "values": ["tickets"], "default": "tickets"},
-        "range": {"type": "enum", "values": ["all", "12w", "8w"], "default": "12w"},
+        "range": {"type": "enum", "values": ["7d", "8w", "12w", "13w", "ytd", "all"], "default": "12w"},
         "agents": {"type": "list[string]", "default": None},
         "pipelines": {"type": "list[string]", "default": None},
         "stat": {"type": "enum", "values": ["median"], "default": "median"}
     },
     "examples": [
         {"label": "Default", "query": ""},
+        {"label": "Last 7 days", "query": "range=7d"},
+        {"label": "Last 8 weeks", "query": "range=8w"},
+        {"label": "Quarterly", "query": "range=13w"},
         {"label": "8w, subset", "query": "range=8w&agents=Nova,Girly&pipelines=Support,Sales"}
+    ]
+})
+
+# Enhanced trend widgets with 3D gradients
+# --------------------------------------------------------------------
+
+# REMOVED: weekly_response_trends_weekday and weekly_response_trends_weekend
+# Replaced by weekly_response_breakdown with view parameter (weekday/weekend)
+
+@register("historic_weekly_volume", title="Historic Weekly Volume")
+def historic_weekly_volume(params: Dict[str, Any]) -> go.Figure:
+    """
+    Historic weekly ticket volume with time range support.
+    
+    Params:
+      - range: 7d|8w|12w|13w|ytd|all
+      - agents: optional list of agents to filter
+      - pipelines: optional list of pipelines to filter
+    """
+    meta = REGISTRY["historic_weekly_volume"]["meta"]
+    schema = meta.get("params", {})
+    p = normalize_params(params or {}, schema)
+    
+    range_val = p.get("range", "12w")
+    agents = _parse_list(p.get("agents"))
+    pipelines = _parse_list(p.get("pipelines"))
+    
+    start_dt, end_dt = compute_range_bounds(range_val, "tickets")
+    df = _load_source_dataframe("tickets", start_dt, end_dt, range_val)
+    
+    if df is None or len(df) == 0:
+        return _no_data_figure(meta.get("title"), "Week Starting", "Number of Tickets")
+    
+    try:
+        # Apply filters
+        data = df.copy()
+        
+        if agents:
+            owner_col = _detect_owner_column(data)
+            if owner_col and owner_col in data.columns:
+                data = data[data[owner_col].isin(agents)]
+        
+        if pipelines and 'Pipeline' in data.columns:
+            data = data[data['Pipeline'].isin(pipelines)]
+        
+        if len(data) == 0:
+            return _no_data_figure(meta.get("title"), "Week Starting", "Number of Tickets")
+        
+        # Group by appropriate time period based on range
+        if range_val == "7d":
+            # Daily grouping for 7 business days
+            data['date'] = data['Create date'].dt.date
+            data['weekday'] = pd.to_datetime(data['date']).dt.weekday
+            # Filter to weekdays only (Monday=0 through Friday=4)
+            data = data[data['weekday'] < 5].copy()
+            time_counts = data.groupby('date').size().reset_index(name='ticket_count')
+            time_counts = time_counts.sort_values('date')
+            x_label = 'Date'
+            hover_template = '<b>%{x}</b><br>Tickets: %{y}<br><extra></extra>'
+            time_col = 'date'
+        elif range_val == "13w":
+            # Quarterly grouping
+            data['quarter'] = data['Create date'].dt.quarter
+            data['year'] = data['Create date'].dt.year
+            data['quarter_label'] = "Q" + data['quarter'].astype(str) + " " + data['year'].astype(str)
+            time_counts = data.groupby(['year', 'quarter', 'quarter_label']).size().reset_index(name='ticket_count')
+            time_counts = time_counts.sort_values(['year', 'quarter'])
+            # Keep only last 4 quarters
+            time_counts = time_counts.tail(4)
+            x_label = 'Quarter'
+            hover_template = '<b>%{x}</b><br>Tickets: %{y}<br><extra></extra>'
+            time_col = 'quarter_label'
+        else:
+            # Weekly grouping for other ranges
+            data['week_start'] = data['Create date'].dt.to_period('W').dt.start_time
+            time_counts = data.groupby('week_start').size().reset_index(name='ticket_count')
+            time_counts = time_counts.sort_values('week_start')
+            x_label = 'Week Starting'
+            hover_template = '<b>Week of %{x|%Y-%m-%d}</b><br>Tickets: %{y}<br><extra></extra>'
+            time_col = 'week_start'
+        
+        if time_counts.empty:
+            return _no_data_figure(meta.get("title"), x_label, "Number of Tickets")
+        
+        # Single teal color for all bars
+        bar_color = 'rgba(78,205,196,0.85)'
+        
+        # Create chart
+        fig = go.Figure()
+        fig.add_trace(go.Bar(
+            x=time_counts[time_col],
+            y=time_counts['ticket_count'],
+            marker=dict(color=bar_color),
+            text=[f"{v}" for v in time_counts['ticket_count']],
+            textposition='outside',
+            textfont=dict(size=12, color='white'),
+            hovertemplate=hover_template,
+            name='Volume'
+        ))
+        
+        fig.update_layout(
+            title=dict(
+                text=f'Historic Ticket Volume ({range_val.upper()})',
+                font=dict(size=18),
+                x=0.5,
+                xanchor='center'
+            ),
+            xaxis=dict(
+                title=x_label,
+                gridcolor='rgba(102, 126, 234, 0.2)',
+                showgrid=True
+            ),
+            yaxis=dict(
+                title='Number of Tickets',
+                gridcolor='rgba(102, 126, 234, 0.2)',
+                showgrid=True
+            ),
+            template='plotly_dark',
+            height=400,
+            margin=dict(l=60, r=40, t=80, b=60),
+            showlegend=False
+        )
+        
+        return fig
+    except Exception:
+        return _no_data_figure(meta.get("title"), "Week Starting", "Number of Tickets")
+
+
+
+# Add metadata for the historic weekly volume widget
+REGISTRY["historic_weekly_volume"]["meta"].update({
+    "description": "Weekly ticket volume trends with Plotly colors",
+    "params": {
+        "source": {"type": "enum", "values": ["tickets"], "default": "tickets"},
+        "range": {"type": "enum", "values": ["7d", "8w", "12w", "13w", "ytd", "all"], "default": "12w"},
+        "agents": {"type": "list[string]", "default": None},
+        "pipelines": {"type": "list[string]", "default": None}
+    },
+    "examples": [
+        {"label": "Default (12 weeks)", "query": ""},
+        {"label": "Last 7 days", "query": "range=7d"},
+        {"label": "8 weeks", "query": "range=8w"},
+        {"label": "Quarterly", "query": "range=13w"},
+        {"label": "Year to date", "query": "range=ytd"},
+        {"label": "All time", "query": "range=all"}
     ]
 })

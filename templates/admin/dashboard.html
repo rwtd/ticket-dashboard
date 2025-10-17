@@ -190,9 +190,12 @@
             </div>
         </div>
 
-        <!-- Data Status Card (NEW) -->
+        <!-- Data Source Management Card (ENHANCED) -->
         <div class="card">
-            <h2>📊 Data Source Status</h2>
+            <h2>📊 Database Status</h2>
+            <p class="info-text">Current data in Firestore and local CSV backups</p>
+
+            <!-- Data Status Display -->
             <div id="data-status-content">
                 <div style="text-align: center; padding: 20px;">
                     <div class="spinner"></div>
@@ -204,7 +207,7 @@
         <!-- Sync Actions Card -->
         <div class="card">
             <h2>🚀 Sync Actions</h2>
-            <p class="info-text">Manually trigger data synchronization from APIs to Google Sheets</p>
+            <p class="info-text">Manually trigger data synchronization from APIs to Firestore</p>
             <div class="actions">
                 <button class="btn btn-success" onclick="triggerSync('incremental')" id="btn-incremental">
                     Incremental Sync
@@ -242,6 +245,7 @@
             <div id="restart-result" class="info-text" style="margin-top: 15px;"></div>
         </div>
     </div>
+
 
     <script>
         function testConnections() {
@@ -319,29 +323,25 @@
                 .then(data => {
                     let html = '';
                     
-                    // Google Sheets status
+                    // Firestore status
                     html += `
                         <div class="status-item">
-                            <span><strong>📊 Google Sheets</strong></span>
+                            <span><strong>🔥 Firestore Database</strong></span>
                             <span></span>
                         </div>
                         <div style="padding-left: 20px; margin-bottom: 10px;">
                             <div class="status-item">
                                 <span>Tickets</span>
-                                <span style="color: ${data.sheets.tickets > 0 ? '#28a745' : '#dc3545'}; font-weight: bold;">
-                                    ${data.sheets.tickets.toLocaleString()} records
+                                <span style="color: ${data.firestore.tickets > 0 ? '#28a745' : '#dc3545'}; font-weight: bold;">
+                                    ${data.firestore.tickets.toLocaleString()} records
                                 </span>
                             </div>
-                            ${data.sheets.tickets_date_range ?
-                                `<div style="font-size: 11px; color: #888; margin-left: 20px;">${data.sheets.tickets_date_range}</div>` : ''}
                             <div class="status-item">
                                 <span>Chats</span>
-                                <span style="color: ${data.sheets.chats > 0 ? '#28a745' : '#dc3545'}; font-weight: bold;">
-                                    ${data.sheets.chats.toLocaleString()} records
+                                <span style="color: ${data.firestore.chats > 0 ? '#28a745' : '#dc3545'}; font-weight: bold;">
+                                    ${data.firestore.chats.toLocaleString()} records
                                 </span>
                             </div>
-                            ${data.sheets.chats_date_range ?
-                                `<div style="font-size: 11px; color: #888; margin-left: 20px;">${data.sheets.chats_date_range}</div>` : ''}
                         </div>
                     `;
                     
@@ -390,6 +390,139 @@
                     statusDiv.innerHTML = `<div style="color: #dc3545; padding: 20px; text-align: center;">❌ Error loading data status: ${error.message}</div>`;
                 });
         }
+
+        
+        function loadUploadedFiles() {
+            fetch('/admin/list-uploaded-files')
+                .then(response => response.json())
+                .then(data => {
+                    const contentDiv = document.getElementById('uploaded-files-content');
+                    
+                    let html = '';
+                    let totalFiles = 0;
+                    
+                    // Tickets section
+                    if (data.tickets && data.tickets.length > 0) {
+                        html += '<div style="margin-bottom: 15px;"><h5 style="color: #00d4aa; font-size: 13px; margin-bottom: 5px;">📋 Ticket Files:</h5>';
+                        data.tickets.forEach(file => {
+                            html += `
+                                <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px; background: rgba(42, 45, 71, 0.5); border-radius: 5px; margin-bottom: 5px;">
+                                    <div style="flex: 1;">
+                                        <div style="font-size: 13px; color: #e0e0e0;">${file.name}</div>
+                                        <div style="font-size: 11px; color: #888;">${file.records.toLocaleString()} records • ${(file.size / 1024).toFixed(1)} KB</div>
+                                    </div>
+                                    <button onclick="deleteUploadedFile('${file.name}', 'tickets')" class="btn btn-warning" style="padding: 5px 10px; font-size: 12px;">Delete</button>
+                                </div>
+                            `;
+                            totalFiles++;
+                        });
+                        html += '</div>';
+                    }
+                    
+                    // Chats section
+                    if (data.chats && data.chats.length > 0) {
+                        html += '<div><h5 style="color: #fbbf24; font-size: 13px; margin-bottom: 5px;">💬 Chat Files:</h5>';
+                        data.chats.forEach(file => {
+                            html += `
+                                <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px; background: rgba(42, 45, 71, 0.5); border-radius: 5px; margin-bottom: 5px;">
+                                    <div style="flex: 1;">
+                                        <div style="font-size: 13px; color: #e0e0e0;">${file.name}</div>
+                                        <div style="font-size: 11px; color: #888;">${file.records.toLocaleString()} records • ${(file.size / 1024).toFixed(1)} KB</div>
+                                    </div>
+                                    <button onclick="deleteUploadedFile('${file.name}', 'chats')" class="btn btn-warning" style="padding: 5px 10px; font-size: 12px;">Delete</button>
+                                </div>
+                            `;
+                            totalFiles++;
+                        });
+                        html += '</div>';
+                    }
+                    
+                    if (totalFiles === 0) {
+                        html = '<p style="color: #888; font-size: 12px; text-align: center;">No uploaded files yet</p>';
+                    }
+                    
+                    contentDiv.innerHTML = html;
+                })
+                .catch(error => {
+                    console.error('Failed to load files:', error);
+                    document.getElementById('uploaded-files-content').innerHTML = '<p style="color: #dc3545; font-size: 12px;">Error loading files</p>';
+                });
+        }
+        
+        function deleteUploadedFile(filename, fileType) {
+            if (!confirm(`Delete ${filename}?`)) {
+                return;
+            }
+            
+            fetch('/admin/delete-uploaded-file', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({filename: filename, file_type: fileType})
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    alert(data.message);
+                    loadUploadedFiles(); // Reload the list
+                } else {
+                    alert('Error: ' + data.message);
+                }
+            })
+            .catch(error => {
+                alert('Delete failed: ' + error.message);
+            });
+        }
+        
+        // Handle CSV upload form submission
+        document.addEventListener('DOMContentLoaded', function() {
+            const uploadForm = document.getElementById('csv-upload-form');
+            if (uploadForm) {
+                uploadForm.addEventListener('submit', function(e) {
+                    e.preventDefault();
+                    
+                    const fileInput = document.getElementById('csv-file');
+                    const fileTypeSelect = document.getElementById('csv-type');
+                    
+                    if (!fileInput.files || fileInput.files.length === 0) {
+                        alert('Please select a CSV file to upload');
+                        return;
+                    }
+                    
+                    const formData = new FormData();
+                    formData.append('file', fileInput.files[0]);
+                    formData.append('file_type', fileTypeSelect.value);
+                    
+                    // Show loading state
+                    const submitBtn = uploadForm.querySelector('button[type="submit"]');
+                    const originalText = submitBtn.textContent;
+                    submitBtn.disabled = true;
+                    submitBtn.innerHTML = '<span class="spinner"></span> Uploading...';
+                    
+                    fetch('/admin/upload-csv', {
+                        method: 'POST',
+                        body: formData
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.status === 'success') {
+                            alert(data.message);
+                            fileInput.value = ''; // Clear the file input
+                            loadUploadedFiles(); // Reload the file list
+                        } else {
+                            alert('Upload failed: ' + data.message);
+                        }
+                    })
+                    .catch(error => {
+                        alert('Upload error: ' + error.message);
+                    })
+                    .finally(() => {
+                        submitBtn.disabled = false;
+                        submitBtn.textContent = originalText;
+                    });
+                });
+            }
+            
+        });
 
         // Load data status on page load
         window.addEventListener('DOMContentLoaded', function() {

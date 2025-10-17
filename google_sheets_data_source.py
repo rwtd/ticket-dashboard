@@ -196,7 +196,36 @@ class GoogleSheetsDataSource:
                 date_columns = ['Create date', 'Last Modified Date', 'Close date']
                 for col in date_columns:
                     if col in df.columns:
-                        df[col] = pd.to_datetime(df[col], errors='coerce')
+                        df[col] = pd.to_datetime(df[col], errors='coerce', utc=True)
+
+                utc_columns = [
+                    'ticket_created_at_utc',
+                    'ticket_last_modified_utc',
+                    'ticket_closed_at_utc'
+                ]
+                for col in utc_columns:
+                    if col in df.columns:
+                        df[col] = pd.to_datetime(df[col], errors='coerce', utc=True)
+
+                if 'ticket_created_at_utc' not in df.columns or df['ticket_created_at_utc'].notna().sum() == 0:
+                    candidates = [
+                        ('Create date', False),
+                        ('created_at', True),
+                    ]
+                    created_utc = None
+                    for column, already_utc in candidates:
+                        if column not in df.columns:
+                            continue
+                        parsed = pd.to_datetime(df[column], errors='coerce', utc=already_utc)
+                        if parsed.notna().any():
+                            created_utc = parsed.dt.tz_convert(pytz.UTC)
+                            break
+
+                    if created_utc is not None:
+                        df['ticket_created_at_utc'] = created_utc
+                        df['ticket_created_at_iso'] = created_utc.dt.strftime('%Y-%m-%dT%H:%M:%SZ')
+                        eastern = pytz.timezone('US/Eastern')
+                        df['Create date'] = created_utc.dt.tz_convert(eastern)
 
                 # Convert numeric columns
                 numeric_columns = ['First Response Time (Hours)', 'Ticket ID']
@@ -259,6 +288,14 @@ class GoogleSheetsDataSource:
                 for col in boolean_columns:
                     if col in df.columns:
                         df[col] = df[col].astype(bool)
+
+                utc_columns = [
+                    'chat_created_at_utc',
+                    'chat_started_at_utc'
+                ]
+                for col in utc_columns:
+                    if col in df.columns:
+                        df[col] = pd.to_datetime(df[col], errors='coerce', utc=True)
 
                 # Update cache
                 self._chats_cache = df
@@ -442,6 +479,145 @@ def get_sheets_data_source(
             return None
 
     return _sheets_data_source
+
+
+# ============================================================================
+# LEGACY COMPATIBILITY FUNCTIONS
+# These functions provide backward compatibility with the old interface
+# ============================================================================
+
+def _load_local_tickets() -> Optional[pd.DataFrame]:
+    """Load tickets from local CSV files as fallback"""
+    try:
+        tickets_dir = Path('tickets')
+        if not tickets_dir.exists():
+            logger.warning("Tickets directory not found")
+            return None
+        
+        csv_files = list(tickets_dir.glob('*.csv'))
+        if not csv_files:
+            logger.warning("No ticket CSV files found")
+            return None
+        
+        dfs = []
+        for csv_file in csv_files:
+            try:
+                df = pd.read_csv(csv_file, low_memory=False)
+                dfs.append(df)
+            except Exception as e:
+                logger.error(f"Error reading {csv_file}: {e}")
+        
+        if not dfs:
+            return None
+        
+        combined_df = pd.concat(dfs, ignore_index=True)
+        logger.info(f"Loaded {len(combined_df)} tickets from {len(dfs)} local CSV files")
+        return combined_df
+        
+    except Exception as e:
+        logger.error(f"Error loading local tickets: {e}")
+        return None
+
+
+def _load_local_chats() -> Optional[pd.DataFrame]:
+    """Load chats from local CSV files as fallback"""
+    try:
+        chats_dir = Path('chats')
+        if not chats_dir.exists():
+            logger.warning("Chats directory not found")
+            return None
+        
+        csv_files = list(chats_dir.glob('*.csv'))
+        if not csv_files:
+            logger.warning("No chat CSV files found")
+            return None
+        
+        dfs = []
+        for csv_file in csv_files:
+            try:
+                df = pd.read_csv(csv_file, low_memory=False)
+                dfs.append(df)
+            except Exception as e:
+                logger.error(f"Error reading {csv_file}: {e}")
+        
+        if not dfs:
+            return None
+        
+        combined_df = pd.concat(dfs, ignore_index=True)
+        logger.info(f"Loaded {len(combined_df)} chats from {len(dfs)} local CSV files")
+        return combined_df
+        
+    except Exception as e:
+        logger.error(f"Error loading local chats: {e}")
+        return None
+
+
+def get_tickets_data(use_cache: bool = True, force_refresh: bool = False) -> Optional[pd.DataFrame]:
+    """
+    Get tickets data from Google Sheets or fallback to local CSV
+    
+    Legacy compatibility function - provides the old simple interface
+    
+    Args:
+        use_cache: Use cached data if available
+        force_refresh: Force refresh even if cache valid
+    
+    Returns:
+        DataFrame with tickets or None
+    """
+    try:
+        # Try Google Sheets first
+        sheets_source = get_sheets_data_source()
+        if sheets_source:
+            df = sheets_source.get_tickets(use_cache=use_cache, force_refresh=force_refresh)
+            if df is not None and not df.empty:
+                logger.info(f"Successfully loaded {len(df)} tickets from Google Sheets")
+                return df
+            else:
+                logger.warning("Google Sheets returned empty tickets data")
+        else:
+            logger.info("Google Sheets not available, using local CSV fallback")
+    
+    except Exception as e:
+        logger.error(f"Error fetching tickets from Google Sheets: {e}")
+    
+    # Fallback to local CSV
+    logger.warning("Falling back to local CSV for tickets")
+    return _load_local_tickets()
+
+
+def get_chats_data(use_cache: bool = True, force_refresh: bool = False) -> Optional[pd.DataFrame]:
+    """
+    Get chats data from Google Sheets or fallback to local CSV
+    
+    Legacy compatibility function - provides the old simple interface
+    
+    Args:
+        use_cache: Use cached data if available
+        force_refresh: Force refresh even if cache valid
+    
+    Returns:
+        DataFrame with chats or None
+    """
+    try:
+        # Try Google Sheets first
+        sheets_source = get_sheets_data_source()
+        if sheets_source:
+            df = sheets_source.get_chats(use_cache=use_cache, force_refresh=force_refresh)
+            if df is not None and not df.empty:
+                logger.info(f"Successfully loaded {len(df)} chats from Google Sheets")
+                return df
+            else:
+                logger.warning("Google Sheets returned empty chats data")
+        else:
+            logger.info("Google Sheets not available, using local CSV fallback")
+    
+    except Exception as e:
+        logger.error(f"Error fetching chats from Google Sheets: {e}")
+    
+    # Fallback to local CSV
+    logger.warning("Falling back to local CSV for chats")
+    return _load_local_chats()
 
 
 def main():

@@ -88,8 +88,9 @@ class LiveChatFetcher:
         """
         try:
             self._rate_limit()
+            
+            # Fetch human agents
             url = f"{self.base_url}/configuration/action/list_agents"
-
             response = self.session.post(url, json={}, timeout=10)
             response.raise_for_status()
             data = response.json()
@@ -99,7 +100,7 @@ class LiveChatFetcher:
             for agent in data:
                 agent_id = agent.get('id')
                 name = agent.get('name', '')
-                agent_type = agent.get('role', 'agent')  # 'agent' or 'bot'
+                agent_type = agent.get('role', 'agent')
 
                 if agent_id and name:
                     agent_map[agent_id] = {
@@ -107,7 +108,29 @@ class LiveChatFetcher:
                         'type': agent_type
                     }
 
-            logger.info(f"👥 Fetched {len(agent_map)} agents")
+            # Fetch bots separately
+            self._rate_limit()
+            url_bots = f"{self.base_url}/configuration/action/list_bots"
+            try:
+                response_bots = self.session.post(url_bots, json={}, timeout=10)
+                response_bots.raise_for_status()
+                bots_data = response_bots.json()
+                
+                for bot in bots_data:
+                    bot_id = bot.get('id')
+                    bot_name = bot.get('name', '')
+                    
+                    if bot_id and bot_name:
+                        agent_map[bot_id] = {
+                            'name': bot_name,
+                            'type': 'bot'
+                        }
+                        
+                logger.info(f"👥 Fetched {len(agent_map)} agents ({len(bots_data)} bots)")
+            except Exception as bot_error:
+                logger.warning(f"Could not fetch bots: {bot_error}")
+                logger.info(f"👥 Fetched {len(agent_map)} agents (no bots)")
+
             return agent_map
 
         except Exception as e:
@@ -120,7 +143,8 @@ class LiveChatFetcher:
         to_date: Optional[datetime] = None,
         limit_per_page: int = 100,
         max_chats: Optional[int] = None,
-        include_archived: bool = True
+        include_archived: bool = True,
+        include_details: bool = True
     ) -> List[Dict[str, Any]]:
         """
         Fetch chats from LiveChat with pagination
@@ -190,6 +214,38 @@ class LiveChatFetcher:
 
                 # Extract chats (API returns 'chats_summary')
                 chats = data.get('chats_summary', [])
+                if not chats:
+                    logger.warning(f"Page {page} returned no chats")
+                    break
+
+                if include_details:
+                    detailed_batch = []
+                    for summary in chats:
+                        chat_id = summary.get('id')
+                        needs_detail = (
+                            not summary.get('created_at') or
+                            'thread' not in summary or
+                            not summary.get('thread') or
+                            ('threads' not in summary and 'thread' not in summary)
+                        )
+
+                        if include_details and chat_id and needs_detail:
+                            detail = self.get_chat_details(chat_id)
+                            if detail:
+                                chat_payload = detail.get('chat') or detail
+                                if chat_payload:
+                                    chat_payload.setdefault('id', chat_id)
+                                    detailed_batch.append(chat_payload)
+                                    continue
+                                else:
+                                    logger.warning(f"Chat detail payload missing 'chat' key for {chat_id}")
+                            else:
+                                logger.warning(f"Falling back to summary for chat {chat_id}")
+
+                        detailed_batch.append(summary)
+
+                    chats = detailed_batch
+
                 all_chats.extend(chats)
                 total_fetched += len(chats)
 
@@ -255,31 +311,86 @@ class LiveChatFetcher:
         if agent_map is None:
             agent_map = self.list_agents()
 
+        # Known bot agent IDs (hardcoded fallback for legacy/unknown bots)
+        known_bot_ids = {
+            '5626186ef1d50006d82a02372509ec3e': 'Agent Scrape',
+            'ce8545b838652bea3889eafd72a6d821': 'Wynn AI',
+            '9b96f9b272d4666b95cc74bb8bbd4131': 'Agent Scrape'  # Additional bot instance
+        }
+
         parsed_chats = []
 
         for chat in chats:
             try:
+                # Handle wrapped payloads from get_chat_details
+                if isinstance(chat, dict) and 'chat' in chat:
+                    chat = chat['chat']
+
                 # Extract basic info
                 chat_id = chat.get('id')
-                created_at = chat.get('created_at')  # UTC timestamp
-                thread = chat.get('thread', {})
+
+                # Threads can appear as single thread or a list
+                thread = chat.get('thread')
+                if not thread and isinstance(chat.get('threads'), list) and chat['threads']:
+                    # Prefer the most recent thread (first in list usually latest)
+                    thread = chat['threads'][0]
+
+                created_at = (
+                    chat.get('created_at')
+                    or chat.get('started_at')
+                    or chat.get('last_event_created_at')
+                )
+
+                if not created_at and isinstance(thread, dict):
+                    created_at = (
+                        thread.get('started_at')
+                        or thread.get('created_at')
+                        or thread.get('last_event_created_at')
+                    )
+
                 users = chat.get('users', [])
                 properties = chat.get('properties', {})
+                if isinstance(properties, dict) and 'items' in properties:
+                    # LiveChat API sometimes returns properties as list under 'items'
+                    properties = {item.get('name'): item.get('value') for item in properties.get('items', [])}
 
                 # Parse agents
                 agents = [u for u in users if u.get('type') in ['agent', 'bot']]
                 primary_agent_id = agents[0].get('id') if agents else None
-                primary_agent = agent_map.get(primary_agent_id, {}).get('name', 'Unknown') if primary_agent_id else None
+                
+                # Try agent_map first, then known_bot_ids fallback
+                if primary_agent_id:
+                    if primary_agent_id in agent_map:
+                        primary_agent = agent_map[primary_agent_id].get('name', 'Unknown')
+                    elif primary_agent_id in known_bot_ids:
+                        primary_agent = known_bot_ids[primary_agent_id]
+                        logger.debug(f"Using hardcoded bot name for ID {primary_agent_id}: {primary_agent}")
+                    else:
+                        primary_agent = 'Unknown'
+                        logger.warning(f"Unknown agent ID: {primary_agent_id}")
+                else:
+                    primary_agent = None
 
                 # Check for bot
                 bot_agent = None
                 human_agents = []
                 for agent in agents:
                     agent_id = agent.get('id')
-                    agent_info = agent_map.get(agent_id, {})
-                    agent_name = agent_info.get('name', 'Unknown')
+                    
+                    # Get agent info from map or known bots
+                    if agent_id in agent_map:
+                        agent_info = agent_map[agent_id]
+                        agent_name = agent_info.get('name', 'Unknown')
+                        agent_is_bot = agent_info.get('type') == 'bot'
+                    elif agent_id in known_bot_ids:
+                        agent_name = known_bot_ids[agent_id]
+                        agent_is_bot = True
+                    else:
+                        agent_name = 'Unknown'
+                        agent_is_bot = False
 
-                    if agent_info.get('type') == 'bot' or 'bot' in agent_name.lower() or agent_name in ['Wynn AI', 'Agent Scrape', 'Traject Data Customer Support']:
+                    # Classify as bot or human
+                    if agent_is_bot or 'bot' in agent_name.lower() or agent_name in ['Wynn AI', 'Agent Scrape', 'Traject Data Customer Support']:
                         bot_agent = agent_name
                     else:
                         human_agents.append(agent_name)
@@ -292,16 +403,38 @@ class LiveChatFetcher:
 
                 # Parse rating
                 rating = properties.get('rating', {})
-                rating_value = rating.get('score') if isinstance(rating, dict) else None
+                rating_score = rating.get('score') if isinstance(rating, dict) else None
                 rating_comment = rating.get('comment', '') if isinstance(rating, dict) else ''
-                has_rating = rating_value is not None
+                
+                # Convert numeric score to text format for rate_raw (to match CSV format)
+                # LiveChat API returns 1-5 numeric scores, CSV has "rated good"/"rated bad"
+                rate_raw = ''
+                if rating_score is not None:
+                    if rating_score >= 4:  # 4-5 = good
+                        rate_raw = 'rated good'
+                    elif rating_score <= 2:  # 1-2 = bad
+                        rate_raw = 'rated bad'
+                    else:  # 3 = neutral (treat as not rated for now)
+                        rate_raw = 'not rated'
+                else:
+                    rate_raw = 'not rated'
+                
+                # Keep the numeric value too (will be recalculated by ChatDataProcessor)
+                rating_value = rating_score
+                has_rating = rating_score is not None
 
                 # Parse other fields
                 source = properties.get('source', {}).get('type', 'unknown')
                 tags = chat.get('tags', [])
+                if tags and isinstance(tags[0], dict):
+                    tags = [tag.get('name', '') for tag in tags]
 
                 # Calculate duration (thread start to end)
-                thread_events = thread.get('events', [])
+                thread_events = []
+                if isinstance(thread, dict):
+                    thread_events = thread.get('events', []) or []
+
+                duration_minutes = 0
                 if thread_events:
                     first_event_time = thread_events[0].get('created_at')
                     last_event_time = thread_events[-1].get('created_at')
@@ -309,12 +442,17 @@ class LiveChatFetcher:
                     if first_event_time and last_event_time:
                         first_dt = datetime.fromisoformat(first_event_time.replace('Z', '+00:00'))
                         last_dt = datetime.fromisoformat(last_event_time.replace('Z', '+00:00'))
-                        duration_seconds = (last_dt - first_dt).total_seconds()
+                        duration_seconds = max((last_dt - first_dt).total_seconds(), 0)
                         duration_minutes = duration_seconds / 60.0
-                    else:
-                        duration_minutes = 0
-                else:
-                    duration_minutes = 0
+
+                if not duration_minutes and isinstance(thread, dict):
+                    started_at = thread.get('started_at') or thread.get('created_at')
+                    ended_at = thread.get('ended_at') or thread.get('last_event_created_at')
+                    if started_at and ended_at:
+                        start_dt = datetime.fromisoformat(str(started_at).replace('Z', '+00:00'))
+                        end_dt = datetime.fromisoformat(str(ended_at).replace('Z', '+00:00'))
+                        duration_seconds = max((end_dt - start_dt).total_seconds(), 0)
+                        duration_minutes = duration_seconds / 60.0
 
                 # Calculate first response time (time to first agent message)
                 first_response_time = None
@@ -322,17 +460,23 @@ class LiveChatFetcher:
                 agent_first_message = None
 
                 for event in thread_events:
+                    if not isinstance(event, dict):
+                        continue
                     if event.get('type') == 'message':
-                        author_id = event.get('author_id')
+                        created_ts = event.get('created_at')
+                        if not created_ts:
+                            continue
+                        created_dt = datetime.fromisoformat(str(created_ts).replace('Z', '+00:00'))
                         author_type = event.get('author_type', '')
 
                         if author_type == 'customer' and customer_first_message is None:
-                            customer_first_message = datetime.fromisoformat(event.get('created_at').replace('Z', '+00:00'))
+                            customer_first_message = created_dt
                         elif author_type in ['agent', 'bot'] and agent_first_message is None:
-                            agent_first_message = datetime.fromisoformat(event.get('created_at').replace('Z', '+00:00'))
+                            agent_first_message = created_dt
 
                         if customer_first_message and agent_first_message:
-                            first_response_time = (agent_first_message - customer_first_message).total_seconds()
+                            delta = agent_first_message - customer_first_message
+                            first_response_time = max(delta.total_seconds(), 0)
                             break
 
                 # Build row
@@ -343,6 +487,7 @@ class LiveChatFetcher:
                     'display_agent': bot_agent if agent_type == 'bot' else primary_agent,
                     'agent_type': agent_type,
                     'bot_transfer': bot_transfer,
+                    'rate_raw': rate_raw,  # Add rate_raw for ChatDataProcessor
                     'rating_value': rating_value,
                     'rating_comment': rating_comment,
                     'has_rating': has_rating,
@@ -390,7 +535,8 @@ class LiveChatFetcher:
         chats = self.fetch_chats(
             from_date=from_date,
             to_date=to_date,
-            max_chats=max_chats
+            max_chats=max_chats,
+            include_details=True
         )
 
         # Parse to DataFrame
