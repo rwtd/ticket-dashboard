@@ -616,6 +616,91 @@ def _safe_hour_series(series: pd.Series) -> pd.Series:
     return pd.to_numeric(series, errors="coerce")
 
 
+def _normalize_agent_name(name: str) -> Optional[str]:
+    """
+    Normalize agent names to canonical CS agent names.
+    Returns None for non-CS agents (Spencer, Erin, Richie, test users, etc.)
+    """
+    if pd.isna(name) or not name or str(name).lower() in ['none', 'nan', '']:
+        return None
+    
+    name_lower = str(name).lower().strip()
+    
+    # Filter out non-CS agents
+    if any(x in name_lower for x in ['spencer', 'erin', 'richie', 'test', 'admin']):
+        return None
+    
+    # Map to canonical names
+    name_mapping = {
+        # Nova variations
+        'nora': 'Nova',
+        'nora n': 'Nova',
+        'nova': 'Nova',
+        # Girly variations
+        'gillie': 'Girly',
+        'gillie e': 'Girly',
+        'girly': 'Girly',
+        'girly e': 'Girly',
+        # Bhushan variations
+        'shan': 'Bhushan',
+        'shan d': 'Bhushan',
+        'bhushan': 'Bhushan',
+        # Francis variations
+        'chris': 'Francis',
+        'chris s': 'Francis',
+        'francis': 'Francis'
+    }
+    
+    return name_mapping.get(name_lower)
+
+
+def _filter_to_cs_agents(df: pd.DataFrame, owner_col: str) -> pd.DataFrame:
+    """Filter DataFrame to only include the 4 CS agents"""
+    if owner_col not in df.columns:
+        return df
+    
+    # Normalize all agent names
+    df = df.copy()
+    df['_normalized_agent'] = df[owner_col].apply(_normalize_agent_name)
+    
+    # Filter to only CS agents (non-None normalized names)
+    df = df[df['_normalized_agent'].notna()].copy()
+    
+    # Replace original column with normalized names
+    df[owner_col] = df['_normalized_agent']
+    df = df.drop(columns=['_normalized_agent'])
+    
+    return df
+
+
+def _get_pipeline_display_name(pipeline_id: str) -> str:
+    """Map pipeline IDs to display names"""
+    if pd.isna(pipeline_id):
+        return "Unknown"
+    
+    pipeline_id_str = str(pipeline_id).strip()
+    
+    # Common pipeline ID to name mappings
+    pipeline_mapping = {
+        '0': 'Support',
+        '1': 'Sales',
+        '2': 'Live Chat',
+        '3': 'Technical',
+        '4': 'Billing',
+        # Add more as needed
+    }
+    
+    return pipeline_mapping.get(pipeline_id_str, pipeline_id_str)
+
+
+def _normalize_pipeline_names(df: pd.DataFrame) -> pd.DataFrame:
+    """Normalize pipeline IDs to display names"""
+    if 'Pipeline' in df.columns:
+        df = df.copy()
+        df['Pipeline'] = df['Pipeline'].apply(_get_pipeline_display_name)
+    return df
+
+
 # --------------------------------------------------------------------
 # 1) tickets_by_pipeline
 # --------------------------------------------------------------------
@@ -2149,6 +2234,13 @@ def pipeline_response_time_heatmap(params: Dict[str, Any]) -> go.Figure:
             return _no_data_figure(meta.get("title"), "Pipeline", "Hours")
 
         data = df.copy()
+        
+        # Normalize pipeline names
+        data = _normalize_pipeline_names(data)
+        
+        # CRITICAL: Filter to CS agents only and normalize names
+        data = _filter_to_cs_agents(data, owner_col)
+        
         if agents:
             data = data[data[owner_col].isin(agents)]
         if pipelines:
