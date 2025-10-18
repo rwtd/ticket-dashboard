@@ -1102,6 +1102,10 @@ def agent_ticket_volume_distribution(params: Dict[str, Any]) -> go.Figure:
 
         # Use weekday tickets per notes
         data = df[df["Weekend_Ticket"] == False].copy() if "Weekend_Ticket" in df.columns else df.copy()
+        
+        # CRITICAL: Filter to CS agents only and normalize names
+        data = _filter_to_cs_agents(data, owner_col)
+        
         if agents:
             data = data[data[owner_col].isin(agents)]
         if len(data) == 0:
@@ -1244,6 +1248,13 @@ def agent_response_time_comparison(params: Dict[str, Any]) -> go.Figure:
             return _no_data_figure(meta.get("title"), "Agent", y_title)
 
         data = df.copy()
+        
+        # CRITICAL: Filter to CS agents only and normalize names
+        data = _filter_to_cs_agents(data, owner_col)
+        
+        if len(data) == 0:
+            return _no_data_figure(meta.get("title"), "Agent", y_title)
+        
         if exclude_pipelines and "Pipeline" in data.columns:
             data = data[~data["Pipeline"].isin(exclude_pipelines)]
         if agents:
@@ -2079,9 +2090,8 @@ def performance_vs_volume(params: Dict[str, Any]) -> go.Figure:
 
         data = df.copy()
         
-        # Filter out test user
-        if owner_col in data.columns:
-            data = data[~data[owner_col].str.lower().str.contains('test', na=False)]
+        # CRITICAL: Filter to CS agents only and normalize names
+        data = _filter_to_cs_agents(data, owner_col)
         
         if agents:
             data = data[data[owner_col].isin(agents)]
@@ -2172,9 +2182,11 @@ def pipeline_distribution_by_agent(params: Dict[str, Any]) -> go.Figure:
 
         data = df.copy()
         
-        # Filter out test user
-        if owner_col in data.columns:
-            data = data[~data[owner_col].str.lower().str.contains('test', na=False)]
+        # Normalize pipeline names
+        data = _normalize_pipeline_names(data)
+        
+        # CRITICAL: Filter to CS agents only and normalize names
+        data = _filter_to_cs_agents(data, owner_col)
         
         if agents:
             data = data[data[owner_col].isin(agents)]
