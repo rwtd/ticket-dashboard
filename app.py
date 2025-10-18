@@ -43,9 +43,12 @@ from google_sheets_exporter import GoogleSheetsExporter
 from widgets import widgets_bp
 from admin_routes import admin_bp
 
+# Flask secret key - generate a random one if not provided
 secret_key = os.environ.get('FLASK_SECRET_KEY')
 if not secret_key:
-    raise RuntimeError("FLASK_SECRET_KEY environment variable must be set for secure sessions")
+    import secrets
+    secret_key = secrets.token_hex(32)
+    print("⚠️  WARNING: FLASK_SECRET_KEY not set - using randomly generated key (sessions won't persist across restarts)")
 
 app = Flask(__name__)
 app.secret_key = secret_key
