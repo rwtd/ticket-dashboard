@@ -340,7 +340,13 @@ def _load_source_dataframe(source: str, start_dt: Optional[datetime], end_dt: Op
         elif source == "chats":
             df = db.get_chats(start_date=start_dt, end_date=end_dt)
             if df is not None and not df.empty:
-                print(f"✅ Using Firestore {source} data (real-time primary source)")
+                # CRITICAL: Deduplicate by chat_id to prevent duplicate records
+                if 'chat_id' in df.columns:
+                    original_count = len(df)
+                    df = df.drop_duplicates(subset=['chat_id'], keep='first')
+                    if original_count != len(df):
+                        print(f"⚠️ Removed {original_count - len(df)} duplicate chat records from Firestore")
+                print(f"✅ Using Firestore {source} data (real-time primary source, {len(df)} unique chats)")
                 # Cache the result
                 try:
                     cache.set(cache_key, df.copy(), ttl=300)
@@ -1339,6 +1345,14 @@ def chat_weekly_volume_breakdown(params: Dict[str, Any]) -> go.Figure:
     try:
         data = df.copy()
         
+        # CRITICAL: Deduplicate by chat_id to prevent repeating patterns from duplicate Firestore records
+        if 'chat_id' in data.columns:
+            original_count = len(data)
+            data = data.drop_duplicates(subset=['chat_id'], keep='first')
+            deduped_count = len(data)
+            if original_count != deduped_count:
+                print(f"⚠️ Removed {original_count - deduped_count} duplicate chat records ({original_count} -> {deduped_count})")
+        
         # Group by quarter for 13w (quarterly), otherwise by week
         if range_val == "13w":
             # Quarterly grouping
@@ -1612,6 +1626,10 @@ def bot_volume_duration(params: Dict[str, Any]) -> go.Figure:
         return _no_data_figure(meta.get("title"), "Bot", "Value")
 
     try:
+        # CRITICAL: Deduplicate by chat_id
+        if 'chat_id' in df.columns:
+            df = df.drop_duplicates(subset=['chat_id'], keep='first')
+        
         data = df[df["agent_type"] == "bot"].copy()
         if bots:
             data = data[data["display_agent"].isin(bots)]
@@ -1699,6 +1717,10 @@ def human_volume_duration(params: Dict[str, Any]) -> go.Figure:
         return _no_data_figure(meta.get("title"), "Agent", "Value")
 
     try:
+        # CRITICAL: Deduplicate by chat_id
+        if 'chat_id' in df.columns:
+            df = df.drop_duplicates(subset=['chat_id'], keep='first')
+        
         data = df.copy()
         
         # Name mapping for all variations
@@ -1846,6 +1868,10 @@ def daily_chat_trends_performance(params: Dict[str, Any]) -> go.Figure:
         return _no_data_figure(meta.get("title"), "Date", "Count")
 
     try:
+        # CRITICAL: Deduplicate by chat_id
+        if 'chat_id' in df.columns:
+            df = df.drop_duplicates(subset=['chat_id'], keep='first')
+        
         daily = df.copy()
         daily["date"] = daily["chat_creation_date_adt"].dt.date
         agg = daily.groupby("date").agg(
