@@ -34,7 +34,9 @@
         "QDRANT_API_KEY": "1",
         "COLLECTION_NAME": "vscode",
         "EMBEDDING_MODEL": ""
-      }
+      },
+      "disabled": false,
+      "alwaysAllow": []
     }
   }
 }
