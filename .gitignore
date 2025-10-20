@@ -75,5 +75,34 @@ Thumbs.db
 *.log
 processing_runs.jsonl
 
+# AI Assistant Files
+.claude/
+.openai/
+*claude*
+*openai*
+*.ai
+ai_*.json
+ai_*.txt
+claude_*.json
+claude_*.txt
+openai_*.json
+openai_*.txt
+
+# Kilo Code / MCP Configuration (may contain API keys/tokens)
+.kilocode/
+.kilo/
+mcp.json
+mcp_*.json
+*.mcp.json
+
+# API Keys and Tokens
+*token*
+*key*
+*secret*
+*credential*
+*.pem
+*.p12
+*.pfx
+
 # Local settings
 .claude/settings.local.json
