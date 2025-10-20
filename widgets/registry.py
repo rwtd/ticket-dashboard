@@ -841,16 +841,19 @@ def _ensure_ticket_columns(df: pd.DataFrame) -> pd.DataFrame:
             print(f"🔍 DEBUG: Response time conversion: {before_count} -> {after_count} valid values")
         
         # Ensure Create date is datetime
-        if 'Create date' in df.columns:
-            print(f"🔍 DEBUG: Current timezone: {df['Create date'].dt.tz}")
+        if 'Create date' in df.columns and len(df) > 0:
+            # Check timezone by sampling first value to avoid Series ambiguity errors
+            sample_tz = df['Create date'].iloc[0] if len(df) > 0 else None
+            current_tz = df['Create date'].dt.tz
+            print(f"🔍 DEBUG: Current timezone: {current_tz}")
             df['Create date'] = pd.to_datetime(df['Create date'], errors='coerce')
             # Convert to US/Eastern timezone for consistency
-            if df['Create date'].dt.tz is None:
+            if current_tz is None:
                 df['Create date'] = df['Create date'].dt.tz_localize('UTC').dt.tz_convert('US/Eastern')
                 print("🔍 DEBUG: Converted from naive to US/Eastern")
-            elif str(df['Create date'].dt.tz) != 'US/Eastern':
+            elif str(current_tz) != 'US/Eastern':
                 df['Create date'] = df['Create date'].dt.tz_convert('US/Eastern')
-                print(f"🔍 DEBUG: Converted from {df['Create date'].dt.tz} to US/Eastern")
+                print(f"🔍 DEBUG: Converted from {current_tz} to US/Eastern")
         
         print(f"✅ Ensured ticket columns for {len(df)} records")
         

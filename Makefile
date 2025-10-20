@@ -49,7 +49,7 @@ deploy: guard-PROJECT_ID guard-REGION
 	  --max-instances=3 \
 	  --concurrency=80 \
 	  --cpu=2 \
-	  --memory=1Gi \
+	  --memory=2Gi \
 	  --timeout=900 \
 	  --set-env-vars WIDGETS_XFO="$(WIDGETS_XFO)",WIDGETS_FRAME_ANCESTORS="$(WIDGETS_FRAME_ANCESTORS)",GOOGLE_SHEETS_CREDENTIALS_PATH="/app/credentials/service_account_credentials.json" \
 	  --update-secrets=/app/credentials/service_account_credentials.json=google-sheets-credentials:latest,GOOGLE_SHEETS_SPREADSHEET_ID=GOOGLE_SHEETS_SPREADSHEET_ID:latest,HUBSPOT_API_KEY=HUBSPOT_API_KEY:latest,LIVECHAT_PAT=LIVECHAT_PAT:latest,GEMINI_API_KEY=GEMINI_API_KEY:latest

@@ -37,5 +37,5 @@ spec:
               value: ${WIDGETS_FRAME_ANCESTORS}
           resources:
             limits:
-              cpu: "1"
-              memory: "512Mi"
+              cpu: "2"
+              memory: "2Gi"
