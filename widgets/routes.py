@@ -166,20 +166,21 @@ def render_widget_html(name: str):
 
     # Widget-specific button configurations
     widget_button_configs = {
-        "weekly_response_breakdown": ["7d", "8w", "12w", "13w", "ytd"],
-        "weekday_weekend_distribution": ["7d", "8w", "12w", "13w", "ytd"],
+        "weekly_response_breakdown": ["8w", "12w", "13w", "ytd"],
+        "weekday_weekend_distribution": ["8w", "12w", "13w", "ytd"],
         "agent_ticket_volume_distribution": ["7d", "8w", "12w", "13w", "ytd"],
         "agent_response_time_comparison": ["7d", "8w", "12w", "13w", "ytd"],
         "pipeline_response_time_heatmap": ["7d", "8w", "12w", "13w", "ytd"],
         "performance_vs_volume": ["7d", "8w", "12w", "13w", "ytd"],
         "pipeline_distribution_by_agent": ["7d", "8w", "12w", "13w", "ytd"],
         "historic_weekly_volume": ["8w", "12w", "13w", "ytd"],
-        "volume_daily_historic": ["7d", "8w", "12w", "13w", "ytd"],
+        "volume_daily_historic": ["7d", "8w", "12w", "ytd"],
         "chat_weekly_volume_breakdown": ["8w", "12w", "13w", "ytd"],
         "weekly_bot_satisfaction": ["8w", "12w", "13w", "ytd"],
         "bot_volume_duration": ["7d", "8w", "12w", "13w", "ytd"],
         "human_volume_duration": ["7d", "8w", "12w", "13w", "ytd"],
-        "agent_weekly_ticket_volume_by_agent": ["8w", "12w", "13w", "ytd"]
+        "agent_weekly_ticket_volume_by_agent": ["8w", "12w", "13w", "ytd"],
+        "daily_chat_trends_performance": ["7d", "4w", "12w", "ytd"]
     }
     
     # Use interactive template if widget has button config
