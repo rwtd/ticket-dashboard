@@ -164,23 +164,30 @@ def render_widget_html(name: str):
     # Server-side embed using CDN for plotly
     chart_html = fig.to_html(full_html=False, include_plotlyjs="cdn")
 
-    # Use interactive template for widgets that need time range buttons
-    interactive_widgets = [
-        "weekly_response_breakdown",
-        "weekday_weekend_distribution",
-        "agent_ticket_volume_distribution",
-        "agent_response_time_comparison",
-        "pipeline_response_time_heatmap",
-        "performance_vs_volume",
-        "pipeline_distribution_by_agent",
-        "historic_weekly_volume",
-        "volume_daily_historic",
-        "chat_weekly_volume_breakdown",
-        "weekly_bot_satisfaction",
-        "bot_volume_duration",
-        "human_volume_duration"
-    ]
-    template_name = "widgets/interactive_widget_base.html" if name in interactive_widgets else "widgets/widget_base.html"
+    # Widget-specific button configurations
+    widget_button_configs = {
+        "weekly_response_breakdown": ["7d", "8w", "12w", "13w", "ytd"],
+        "weekday_weekend_distribution": ["7d", "8w", "12w", "13w", "ytd"],
+        "agent_ticket_volume_distribution": ["7d", "8w", "12w", "13w", "ytd"],
+        "agent_response_time_comparison": ["7d", "8w", "12w", "13w", "ytd"],
+        "pipeline_response_time_heatmap": ["7d", "8w", "12w", "13w", "ytd"],
+        "performance_vs_volume": ["7d", "8w", "12w", "13w", "ytd"],
+        "pipeline_distribution_by_agent": ["7d", "8w", "12w", "13w", "ytd"],
+        "historic_weekly_volume": ["8w", "12w", "13w", "ytd"],
+        "volume_daily_historic": ["7d", "8w", "12w", "13w", "ytd"],
+        "chat_weekly_volume_breakdown": ["8w", "12w", "13w", "ytd"],
+        "weekly_bot_satisfaction": ["8w", "12w", "13w", "ytd"],
+        "bot_volume_duration": ["7d", "8w", "12w", "13w", "ytd"],
+        "human_volume_duration": ["7d", "8w", "12w", "13w", "ytd"],
+        "agent_weekly_ticket_volume_by_agent": ["8w", "12w", "13w", "ytd"]
+    }
+    
+    # Use interactive template if widget has button config
+    has_buttons = name in widget_button_configs
+    template_name = "widgets/interactive_widget_base.html" if has_buttons else "widgets/widget_base.html"
+    
+    # Get button configuration for this widget
+    buttons = widget_button_configs.get(name, [])
 
     # Render template
     resp = make_response(
@@ -191,6 +198,7 @@ def render_widget_html(name: str):
             width=width_css,
             height=height_css,
             title=meta.get("title", name.replace("_", " ").title()),
+            buttons=buttons if has_buttons else []
         )
     )
     return _apply_widget_headers(resp)

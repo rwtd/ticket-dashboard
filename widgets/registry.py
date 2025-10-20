@@ -332,6 +332,12 @@ def _load_source_dataframe(source: str, start_dt: Optional[datetime], end_dt: Op
             if df is not None and not df.empty:
                 print(f"🔍 DEBUG: Ticket columns from Firestore: {df.columns.tolist()}")
                 
+                # CRITICAL: Remove duplicate columns before processing
+                if df.columns.duplicated().any():
+                    print(f"⚠️ Found duplicate columns, removing...")
+                    df = df.loc[:, ~df.columns.duplicated()]
+                    print(f"✅ After deduplication: {df.columns.tolist()}")
+                
                 # Apply pipeline name mapping if needed
                 df = _apply_pipeline_mapping(df)
                 
@@ -1579,7 +1585,8 @@ def chat_weekly_volume_breakdown(params: Dict[str, Any]) -> go.Figure:
             date_col = col
             break
     
-    if date_col is None or "agent_type" not in df.columns:
+    # Check for required columns - bot_transfer is critical for human vs bot differentiation
+    if date_col is None or "bot_transfer" not in df.columns:
         return _no_data_figure(meta.get("title"), "Week Starting", "Chats")
 
     try:
@@ -1593,6 +1600,11 @@ def chat_weekly_volume_breakdown(params: Dict[str, Any]) -> go.Figure:
             if original_count != deduped_count:
                 print(f"⚠️ Removed {original_count - deduped_count} duplicate chat records ({original_count} -> {deduped_count})")
         
+        # CRITICAL: In Firestore, agent_type is always 'bot' because all chats start with bot
+        # Use bot_transfer to differentiate: True = transferred to human, False = bot-only resolution
+        data['_is_human_chat'] = data['bot_transfer'].fillna(False).astype(bool)
+        data['_is_bot_only'] = ~data['_is_human_chat']
+        
         # Group by quarter for 13w (quarterly), otherwise by week
         if range_val == "13w":
             # Quarterly grouping
@@ -1601,8 +1613,8 @@ def chat_weekly_volume_breakdown(params: Dict[str, Any]) -> go.Figure:
             data["period_label"] = "Q" + data["quarter"].astype(str) + " " + data["year"].astype(str)
             
             quarterly_total = data.groupby(["year", "quarter", "period_label"]).size().reset_index(name="Total")
-            quarterly_bot = data[data["agent_type"] == "bot"].groupby(["year", "quarter", "period_label"]).size().reset_index(name="Bot")
-            quarterly_human = data[data["agent_type"] == "human"].groupby(["year", "quarter", "period_label"]).size().reset_index(name="Human")
+            quarterly_bot = data[data["_is_bot_only"]].groupby(["year", "quarter", "period_label"]).size().reset_index(name="Bot")
+            quarterly_human = data[data["_is_human_chat"]].groupby(["year", "quarter", "period_label"]).size().reset_index(name="Human")
             
             result = quarterly_total.merge(quarterly_bot, on=["year", "quarter", "period_label"], how="left").merge(quarterly_human, on=["year", "quarter", "period_label"], how="left").fillna(0)
             result = result.sort_values(["year", "quarter"])
@@ -1616,8 +1628,8 @@ def chat_weekly_volume_breakdown(params: Dict[str, Any]) -> go.Figure:
             data["week_start"] = week
             
             weekly_total = data.groupby("week_start").size().reset_index(name="Total")
-            weekly_bot = data[data["agent_type"] == "bot"].groupby("week_start").size().reset_index(name="Bot")
-            weekly_human = data[data["agent_type"] == "human"].groupby("week_start").size().reset_index(name="Human")
+            weekly_bot = data[data["_is_bot_only"]].groupby("week_start").size().reset_index(name="Bot")
+            weekly_human = data[data["_is_human_chat"]].groupby("week_start").size().reset_index(name="Human")
             
             result = weekly_total.merge(weekly_bot, on="week_start", how="left").merge(weekly_human, on="week_start", how="left").fillna(0)
             result = result.sort_values("week_start")
@@ -2040,7 +2052,7 @@ def human_volume_duration(params: Dict[str, Any]) -> go.Figure:
             name="Volume",
             marker_color="rgba(255,107,107,0.85)",
             text=[f"{v}" for v in stats["total_chats"]],
-            textposition='outside',
+            textposition='inside',  # Changed to inside to prevent cutoff
             textfont=dict(size=12, color='white')
         ), row=1, col=1)
         
@@ -2051,20 +2063,20 @@ def human_volume_duration(params: Dict[str, Any]) -> go.Figure:
             name="Avg Duration",
             marker_color="rgba(253,121,168,0.85)",
             text=[f"{v:.1f}" for v in stats["avg_duration"]],
-            textposition='outside',
+            textposition='inside',  # Changed to inside to prevent cutoff
             textfont=dict(size=12, color='white')
         ), row=2, col=1)
         
-        # Set Y-axis labels
-        fig.update_yaxes(title_text="Chats", row=1, col=1)
-        fig.update_yaxes(title_text="Minutes", row=2, col=1)
+        # Set Y-axis labels with more range to accommodate values
+        fig.update_yaxes(title_text="Chats", row=1, col=1, rangemode='tozero')
+        fig.update_yaxes(title_text="Minutes", row=2, col=1, rangemode='tozero')
         fig.update_xaxes(title_text="Agent", row=2, col=1)
         
         fig.update_layout(
             title=meta.get("title"),
             template="plotly_dark",
-            height=600,  # Taller to accommodate two charts
-            margin=dict(l=40, r=20, t=80, b=40),
+            height=650,  # Taller to accommodate two charts with labels
+            margin=dict(l=40, r=20, t=100, b=60),  # Increased margins
             showlegend=False
         )
         return fig
@@ -2122,12 +2134,26 @@ def daily_chat_trends_performance(params: Dict[str, Any]) -> go.Figure:
             )
         
         daily["date"] = daily["chat_creation_date_adt"].dt.date
+        
+        # Count chats with ratings per day
         agg = daily.groupby("date").agg(
             chat_count=("date", "size"),
-            avg_satisfaction=("rating_value", "mean"),
             transfers=("bot_transfer", "sum")
         ).reset_index()
-        agg["satisfaction_pct"] = (pd.to_numeric(agg["avg_satisfaction"], errors="coerce") * 20).fillna(0.0)
+        
+        # Calculate satisfaction % properly - count good ratings / total ratings
+        if 'rating_value' in daily.columns and 'rate_raw' in daily.columns:
+            # Group by date and calculate satisfaction from rate_raw (good/bad strings)
+            satisfaction_by_date = daily.groupby("date").apply(
+                lambda x: (
+                    (x['rate_raw'].str.lower() == 'good').sum() /
+                    x['rate_raw'].notna().sum() * 100
+                ) if x['rate_raw'].notna().sum() > 0 else 0.0
+            ).reset_index(name="satisfaction_pct")
+            agg = agg.merge(satisfaction_by_date, on="date", how="left")
+        else:
+            agg["satisfaction_pct"] = 0.0
+        
         agg["transfer_rate"] = (pd.to_numeric(agg["transfers"], errors="coerce") / agg["chat_count"]) * 100
 
         if len(agg) == 0:
@@ -2263,25 +2289,62 @@ def agent_weekly_ticket_volume_by_agent(params: Dict[str, Any]) -> go.Figure:
             return _no_data_figure(meta.get("title"), "Week Starting", "Tickets")
 
         data = df.copy()
+        
+        # CRITICAL: Filter to CS agents only and normalize names
+        data = _filter_to_cs_agents(data, owner_col)
+        
         if agents:
             data = data[data[owner_col].isin(agents)]
-        data["week_start"] = data["Create date"].dt.tz_localize(None).dt.to_period("W-MON").dt.start_time
-
-        grouped = data.groupby(["week_start", owner_col]).size().reset_index(name="count")
-        grouped = grouped.sort_values("week_start")
-        if len(grouped) == 0:
+        
+        if len(data) == 0:
             return _no_data_figure(meta.get("title"), "Week Starting", "Tickets")
+        
+        # Group by quarter for 13w (quarterly), otherwise by week
+        if range_val == "13w":
+            # Quarterly grouping
+            data["quarter"] = data["Create date"].dt.quarter
+            data["year"] = data["Create date"].dt.year
+            data["period_label"] = "Q" + data["quarter"].astype(str) + " " + data["year"].astype(str)
+            
+            grouped = data.groupby(["year", "quarter", "period_label", owner_col]).size().reset_index(name="count")
+            grouped = grouped.sort_values(["year", "quarter"])
+            # Keep only last 4 quarters
+            unique_quarters = grouped[["year", "quarter", "period_label"]].drop_duplicates().sort_values(["year", "quarter"]).tail(4)
+            grouped = grouped[grouped["period_label"].isin(unique_quarters["period_label"])]
+            time_col = "period_label"
+            x_title = "Quarter"
+        else:
+            # Weekly grouping
+            data["week_start"] = data["Create date"].dt.tz_localize(None).dt.to_period("W-MON").dt.start_time
+            grouped = data.groupby(["week_start", owner_col]).size().reset_index(name="count")
+            grouped = grouped.sort_values("week_start")
+            time_col = "week_start"
+            x_title = "Week Starting"
+        
+        if len(grouped) == 0:
+            return _no_data_figure(meta.get("title"), x_title, "Tickets")
 
+        # Convert to grouped bar chart (consistency with other widgets)
         fig = go.Figure()
         for agent, g in grouped.groupby(owner_col):
-            fig.add_trace(go.Scatter(x=g["week_start"], y=g["count"], mode="lines+markers", name=str(agent)))
+            fig.add_trace(go.Bar(
+                x=g[time_col],
+                y=g["count"],
+                name=str(agent),
+                text=[f"{v}" for v in g["count"]],
+                textposition='outside',
+                textfont=dict(size=10)
+            ))
+        
         fig.update_layout(
             title=meta.get("title"),
-            xaxis_title="Week Starting",
+            xaxis_title=x_title,
             yaxis_title="Tickets",
+            barmode="group",
             template="plotly_dark",
             margin=dict(l=40, r=20, t=50, b=40),
-            showlegend=True
+            showlegend=True,
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
         )
         return fig
     except Exception:

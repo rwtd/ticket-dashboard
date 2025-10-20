@@ -253,11 +253,27 @@
   <div class="widget-container">
     <!-- Time range buttons -->
     <div class="time-range-buttons">
-      <button class="time-range-button" data-range="7d">7 Days</button>
-      <button class="time-range-button" data-range="8w">8 Weeks</button>
-      <button class="time-range-button" data-range="12w">12 Weeks</button>
-      <button class="time-range-button" data-range="13w">Quarterly</button>
-      <button class="time-range-button" data-range="ytd">YTD</button>
+      {% if buttons %}
+        {% for button_range in buttons %}
+          {% if button_range == "7d" %}
+            <button class="time-range-button" data-range="7d">7 Days</button>
+          {% elif button_range == "8w" %}
+            <button class="time-range-button" data-range="8w">8 Weeks</button>
+          {% elif button_range == "12w" %}
+            <button class="time-range-button" data-range="12w">12 Weeks</button>
+          {% elif button_range == "13w" %}
+            <button class="time-range-button" data-range="13w">Quarterly</button>
+          {% elif button_range == "ytd" %}
+            <button class="time-range-button" data-range="ytd">YTD</button>
+          {% endif %}
+        {% endfor %}
+      {% else %}
+        <button class="time-range-button" data-range="7d">7 Days</button>
+        <button class="time-range-button" data-range="8w">8 Weeks</button>
+        <button class="time-range-button" data-range="12w">12 Weeks</button>
+        <button class="time-range-button" data-range="13w">Quarterly</button>
+        <button class="time-range-button" data-range="ytd">YTD</button>
+      {% endif %}
     </div>
 
     <!-- Chart wrapper -->

@@ -346,11 +346,21 @@ class TicketDataProcessor:
 
         def _delta(row):
             # Handle Live Chat pipeline
-            if has_pipeline_col and row.get("Pipeline") == "Live Chat ":
-                return pd.Timedelta(seconds=30)
+            if has_pipeline_col and "Pipeline" in row.index:
+                pipeline_val = row["Pipeline"]
+                if pipeline_val == "Live Chat ":
+                    return pd.Timedelta(seconds=30)
 
-            # Check if response date column exists and has value
-            if not has_response_col or pd.isna(row.get("First agent email response date")) or pd.isna(row["Create date"]):
+            # Check required columns exist first
+            if not has_response_col:
+                return pd.NaT
+            
+            # Check Create date
+            if "Create date" not in row.index or pd.isna(row["Create date"]):
+                return pd.NaT
+            
+            # Check response date
+            if "First agent email response date" not in row.index or pd.isna(row["First agent email response date"]):
                 return pd.NaT
 
             # Calculate response time
