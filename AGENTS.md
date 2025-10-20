@@ -1,32 +1,46 @@
-# Repository Guidelines
+# AGENTS.md
 
-## Project Structure & Module Organization
-- `app.py` and `start_ui.py` run the Flask dashboard; analytics logic lives beside them in modules such as `enhanced_query_engine.py` and `conversation_manager.py`.
-- UI assets stay in `templates/`, `widgets/`, and supporting HTML previews; shared settings live under `config/`.
-- Sample data sits in `tickets/`, `chats/`, and `uploads/`; deployment and reference material live in `cloudrun/`, `scripts/`, `docs/`, and the root `Makefile`.
+This file provides guidance to agents when working with code in this repository.
 
-## Build, Test, and Development Commands
-- `python -m venv .venv && source .venv/bin/activate` creates an isolated Python 3.8+ workspace.
-- `pip install -r requirements.txt` installs the full stack; use `requirements.minimal.txt` for slim Docker runs.
-- `python start_ui.py` serves the dashboard with conversational AI at `http://localhost:5000`.
-- `python ticket_analytics.py --week 22072025` generates scheduled reports (swap `--day` or `--custom` as needed).
-- `python test_agent_performance_enhancements.py` plus the companion scripts (`test_daily_tickets.py`, `test_enhanced_agent_performance_final.py`) validate agent and ticket charts and write HTML artefacts for review.
+## Critical Timezone Gotchas
+- **Tickets MUST use `US/Eastern`**, NOT `Canada/Atlantic`, despite both being Atlantic timezone (see [`common_utils.py:60`](common_utils.py:60))
+- **Chats use UTC→ADT conversion** in [`data_sync_service.py`](data_sync_service.py:298)
+- **Weekend boundaries are 6PM Friday to 5AM Monday EDT**, not midnight (see [`config/schedule.yaml`](config/schedule.yaml:1))
+- [`app.py`](app.py:417) enforces `US/Eastern` for date filtering - replicating this in other modules is critical
 
-## Coding Style & Naming Conventions
-- Follow PEP 8 with 4-space indentation, `snake_case` for functions, and `PascalCase` for classes such as `AgentPerformanceAnalyzer`.
-- Keep docstrings concise, reserve inline comments for tricky data transforms, and centralize business logic in reusable modules rather than Flask routes.
-- Match existing file patterns (`tickets/YYYY-MM-DD.csv`, lowercase-hyphen utilities) and prefer explicit type hints when touching analytics pipelines.
+## Agent Name Mapping (Non-Standard)
+Real names appear in analytics, but source data has multiple pseudonyms requiring mapping:
+- `Shan`/`Shan D` → `Bhushan`
+- `Chris`/`Chris S` → `Francis`  
+- `Nora`/`Nora N` → `Nova`
+- `Gillie`/`Gillie E`/`Girly E` → `Girly`
+- **Manager (Richie) tickets are auto-excluded** - only Bhushan, Girly, Nova, Francis analyzed
 
-## Testing Guidelines
-- Tests are executable scripts; run them directly with an activated venv and current CSV fixtures in `tickets/` and `chats/`.
-- Refresh or mock data before asserting new metrics; note that scripts exit early when expected files are absent.
-- Capture CLI output and attach generated HTML when requesting review of chart or UI changes.
+## Data Processing Gotchas
+- **Invalid dates must use `errors='coerce'`** - chat data contains "Unknown" strings causing NaT comparison errors (see [`chat_processor.py`](chat_processor.py:1))
+- **SPAM pipeline (ID `95947431`) is auto-excluded** from all ticket analytics
+- **Overnight shifts supported** in schedule.yaml when `end < start` (e.g., 19:00-05:00)
+- **Negative response times are invalid** - treat as None/exclude
 
-## Commit & Pull Request Guidelines
-- Mirror the Conventional Commit flavour already in history (`feat(analytics): …`, `fix(ui): …`) using an imperative summary and scoped prefix when helpful.
-- Squash noisy commits before opening a PR and mention key modules touched plus any data requirements in the description.
-- PRs should list test commands run, link the relevant issue, and include visuals (screenshots or GIFs) when altering dashboards or widgets.
+## Firestore Architecture (Oct 2025)
+- **Primary data source is Firestore**, NOT Google Sheets (despite CLAUDE.md references)
+- [`firestore_db.py`](firestore_db.py:1) provides `get_tickets()` and `get_chats()` - use these, not direct CSV access
+- **Widgets use Firestore** via [`firestore_db.get_database()`](firestore_db.py:1), fallback to CSV only if Firestore unavailable
+- **Google Sheets is export target**, not source (via [`export_firestore_to_sheets.py`](export_firestore_to_sheets.py:1))
 
-## Deployment Notes
-- Use `make PROJECT_ID=<gcp-project> REGION=<gcp-region> all` to build and deploy to Cloud Run, or invoke `scripts/deploy_cloud_run.sh` in automated flows.
-- Keep environment variables (`WIDGETS_XFO`, `WIDGETS_FRAME_ANCESTORS`) aligned across `cloudbuild.yaml`, `Dockerfile`, and docs to prevent CSP regressions.
+## Deployment Commands (Non-Standard)
+- **Cloud Run requires 5 env vars** as mounted secrets: `GOOGLE_SHEETS_SPREADSHEET_ID`, `HUBSPOT_API_KEY`, `LIVECHAT_PAT`, `GEMINI_API_KEY`, plus credentials JSON (see [`Makefile:54`](Makefile:54))
+- **Admin password defaults to `admin123`** if `ADMIN_PASSWORD` not set - admin routes disabled without it
+- **Firestore logging uses 7-day retention** by default (see [`start_ui.py:76`](start_ui.py:76))
+
+## AI Query Engine Context
+- [`enhanced_query_engine.py`](enhanced_query_engine.py:49) loads dashboard logic from hardcoded dict - when changing metric calculations, **update both processor AND query engine dashboard_logic**
+- **Conversation context limited to last 5 exchanges** (see [`enhanced_query_engine.py:573`](enhanced_query_engine.py:573))
+- **Schema-only approach** - never send raw customer data to AI APIs
+
+## Testing Pattern
+Tests are **executable Python scripts** (not pytest), run directly: `python test_agent_performance_enhancements.py`. They write HTML output to review visually, exit early if CSV fixtures missing.
+
+## Widget Security
+- **CSP frame-ancestors includes HubSpot domains by default** (see [`app.py:80`](app.py:80))
+- Widgets use `interactive_widget_base.html` for time-range filtering, `widget_base.html` for static charts

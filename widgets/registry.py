@@ -327,9 +327,16 @@ def _load_source_dataframe(source: str, start_dt: Optional[datetime], end_dt: Op
         if source == "tickets":
             df = db.get_tickets(start_date=start_dt, end_date=end_dt)
             if df is not None and not df.empty:
+                # Apply pipeline name mapping if needed
+                df = _apply_pipeline_mapping(df)
+                
                 # Recalculate response times since Firestore may have stale calculations
                 processor = TicketDataProcessor()
                 df = processor._calc_first_response(df)
+                
+                # Ensure required columns exist for widgets
+                df = _ensure_ticket_columns(df)
+                
                 print(f"✅ Using Firestore {source} data (real-time primary source, response times recalculated)")
                 # Cache the result
                 try:
@@ -346,6 +353,10 @@ def _load_source_dataframe(source: str, start_dt: Optional[datetime], end_dt: Op
                     df = df.drop_duplicates(subset=['chat_id'], keep='first')
                     if original_count != len(df):
                         print(f"⚠️ Removed {original_count - len(df)} duplicate chat records from Firestore")
+                
+                # Ensure required columns exist for chat widgets
+                df = _ensure_chat_columns(df)
+                
                 print(f"✅ Using Firestore {source} data (real-time primary source, {len(df)} unique chats)")
                 # Cache the result
                 try:
@@ -679,31 +690,189 @@ def _filter_to_cs_agents(df: pd.DataFrame, owner_col: str) -> pd.DataFrame:
     return df
 
 
-def _get_pipeline_display_name(pipeline_id: str) -> str:
-    """Map pipeline IDs to display names"""
-    if pd.isna(pipeline_id):
+def _get_pipeline_display_name(pipeline_name: str) -> str:
+    """
+    Normalize pipeline names to shorter display names.
+    Firestore stores full names like 'Support Pipeline', we want just 'Support'
+    """
+    if pd.isna(pipeline_name):
         return "Unknown"
     
-    pipeline_id_str = str(pipeline_id).strip()
+    name_str = str(pipeline_name).strip()
     
-    # Common pipeline ID to name mappings
+    # Normalize long names to short names
     pipeline_mapping = {
-        '0': 'Support',
-        '1': 'Sales',
-        '2': 'Live Chat',
-        '3': 'Technical',
-        '4': 'Billing',
-        # Add more as needed
+        'Support Pipeline': 'Support',
+        'Enterprise and VIP Tickets': 'Enterprise/VIP',
+        'Dev Tickets': 'Dev',
+        'Live Chat ': 'Live Chat',
+        'Support': 'Support',
+        # Add more as discovered
     }
     
-    return pipeline_mapping.get(pipeline_id_str, pipeline_id_str)
+    return pipeline_mapping.get(name_str, name_str)
 
 
 def _normalize_pipeline_names(df: pd.DataFrame) -> pd.DataFrame:
-    """Normalize pipeline IDs to display names"""
+    """Normalize pipeline names to shorter display names"""
     if 'Pipeline' in df.columns:
         df = df.copy()
         df['Pipeline'] = df['Pipeline'].apply(_get_pipeline_display_name)
+    return df
+
+
+def _apply_pipeline_mapping(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Apply HubSpot pipeline ID to name mapping if needed.
+    This addresses the issue where widgets show pipeline IDs instead of names.
+    """
+    if 'Pipeline' not in df.columns:
+        return df
+    
+    try:
+        # Check if Pipeline column contains numeric IDs (needs mapping)
+        sample_values = df['Pipeline'].dropna().head(5)
+        if sample_values.empty:
+            return df
+        
+        # If we have numeric pipeline IDs, try to map them to names
+        if all(str(val).isdigit() for val in sample_values):
+            print("⚠️ Pipeline column contains IDs, attempting to map to names...")
+            
+            # Try to get HubSpot API mapping
+            try:
+                import os
+                from hubspot_fetcher import HubSpotTicketFetcher
+                
+                api_key = os.environ.get('HUBSPOT_API_KEY')
+                if api_key:
+                    fetcher = HubSpotTicketFetcher(api_key)
+                    pipeline_mapping = fetcher.fetch_pipelines()
+                    
+                    if pipeline_mapping:
+                        # Apply mapping
+                        df = df.copy()
+                        df['Pipeline'] = df['Pipeline'].astype(str).map(pipeline_mapping).fillna(df['Pipeline'])
+                        print(f"✅ Mapped {len(pipeline_mapping)} pipeline IDs to names")
+                    else:
+                        print("⚠️ No pipeline mappings retrieved from HubSpot")
+                else:
+                    print("⚠️ HUBSPOT_API_KEY not available, using fallback mapping")
+                    # Fallback static mapping for common pipelines
+                    fallback_mapping = {
+                        '95947431': 'SPAM',  # Auto-exclude this one
+                        # Add other known mappings here as discovered
+                    }
+                    df = df.copy()
+                    df['Pipeline'] = df['Pipeline'].astype(str).map(fallback_mapping).fillna(df['Pipeline'])
+                    
+            except Exception as e:
+                print(f"⚠️ Failed to apply pipeline mapping: {e}")
+                # Continue without mapping - better to show IDs than fail
+        
+        # Apply display name normalization (long names to short names)
+        df = _normalize_pipeline_names(df)
+        
+        # Filter out SPAM pipeline after mapping
+        if 'Pipeline' in df.columns:
+            df = df[df['Pipeline'] != 'SPAM'].copy()
+            
+    except Exception as e:
+        print(f"⚠️ Error in pipeline mapping: {e}")
+    
+    return df
+
+
+def _ensure_ticket_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Ensure required columns exist for ticket widgets with proper defaults.
+    This addresses empty chart issues due to missing columns.
+    """
+    if df.empty:
+        return df
+    
+    try:
+        df = df.copy()
+        
+        # Ensure Weekend_Ticket column exists
+        if 'Weekend_Ticket' not in df.columns and 'Create date' in df.columns:
+            from ticket_processor import TicketDataProcessor
+            processor = TicketDataProcessor()
+            df = processor._add_weekend_flag(df)
+            print("✅ Added Weekend_Ticket column for ticket widgets")
+        
+        # Ensure First Response Time (Hours) column exists and is numeric
+        if 'First Response Time (Hours)' in df.columns:
+            df['First Response Time (Hours)'] = pd.to_numeric(df['First Response Time (Hours)'], errors='coerce')
+        
+        # Ensure Create date is datetime
+        if 'Create date' in df.columns:
+            df['Create date'] = pd.to_datetime(df['Create date'], errors='coerce')
+            # Convert to US/Eastern timezone for consistency
+            if df['Create date'].dt.tz is None:
+                df['Create date'] = df['Create date'].dt.tz_localize('UTC').dt.tz_convert('US/Eastern')
+            elif str(df['Create date'].dt.tz) != 'US/Eastern':
+                df['Create date'] = df['Create date'].dt.tz_convert('US/Eastern')
+        
+        print(f"✅ Ensured ticket columns for {len(df)} records")
+        
+    except Exception as e:
+        print(f"⚠️ Error ensuring ticket columns: {e}")
+    
+    return df
+
+
+def _ensure_chat_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Ensure required columns exist for chat widgets with proper defaults.
+    This addresses empty chart issues due to missing columns.
+    """
+    if df.empty:
+        return df
+    
+    try:
+        df = df.copy()
+        
+        # Ensure chat_creation_date_adt is datetime
+        if 'chat_creation_date_adt' in df.columns:
+            df['chat_creation_date_adt'] = pd.to_datetime(df['chat_creation_date_adt'], errors='coerce')
+        
+        # Ensure rating_value exists and is numeric (for satisfaction widgets)
+        if 'rating_value' not in df.columns and 'rate_raw' in df.columns:
+            # Convert rate_raw ('good'/'bad') to rating_value (5/1)
+            df['rating_value'] = df['rate_raw'].apply(
+                lambda x: 5 if str(x).lower() == 'good' else (1 if str(x).lower() == 'bad' else None)
+            )
+            print("✅ Added rating_value column from rate_raw")
+        
+        # Ensure has_rating column exists
+        if 'has_rating' not in df.columns and 'rating_value' in df.columns:
+            df['has_rating'] = df['rating_value'].notna()
+            print("✅ Added has_rating column")
+        
+        # Ensure bot_transfer column exists and is boolean
+        if 'bot_transfer' in df.columns:
+            df['bot_transfer'] = df['bot_transfer'].astype(bool)
+        
+        # Ensure duration_minutes is numeric
+        if 'duration_minutes' in df.columns:
+            df['duration_minutes'] = pd.to_numeric(df['duration_minutes'], errors='coerce')
+        
+        # Ensure agent_type column exists (critical for filtering)
+        if 'agent_type' not in df.columns:
+            # Try to infer from other columns
+            if 'display_agent' in df.columns:
+                # Simple heuristic: if display_agent contains "AI" or "Bot", it's bot
+                df['agent_type'] = df['display_agent'].apply(
+                    lambda x: 'bot' if any(term in str(x).lower() for term in ['ai', 'bot', 'wynn']) else 'human'
+                )
+                print("✅ Inferred agent_type from display_agent")
+        
+        print(f"✅ Ensured chat columns for {len(df)} records")
+        
+    except Exception as e:
+        print(f"⚠️ Error ensuring chat columns: {e}")
+    
     return df
 
 
@@ -1801,7 +1970,7 @@ def human_volume_duration(params: Dict[str, Any]) -> go.Figure:
         fig = make_subplots(
             rows=2, cols=1,
             subplot_titles=("Chat Volume by Agent", "Avg Duration (min) by Agent"),
-            vertical_spacing=0.15
+            vertical_spacing=0.25  # Increased from 0.15 for more breathing room
         )
         
         # Top chart: Volume
@@ -1884,6 +2053,14 @@ def daily_chat_trends_performance(params: Dict[str, Any]) -> go.Figure:
             df = df.drop_duplicates(subset=['chat_id'], keep='first')
         
         daily = df.copy()
+        
+        # Calculate rating_value from rate_raw if missing (Firestore doesn't have it)
+        if 'rating_value' not in daily.columns and 'rate_raw' in daily.columns:
+            # rate_raw is 'good' or 'bad' - convert to numeric (5 for good, 1 for bad)
+            daily['rating_value'] = daily['rate_raw'].apply(
+                lambda x: 5 if str(x).lower() == 'good' else (1 if str(x).lower() == 'bad' else None)
+            )
+        
         daily["date"] = daily["chat_creation_date_adt"].dt.date
         agg = daily.groupby("date").agg(
             chat_count=("date", "size"),
