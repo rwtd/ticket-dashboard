@@ -174,7 +174,7 @@ def render_widget_html(name: str):
         "performance_vs_volume": ["7d", "8w", "12w", "13w", "ytd"],
         "pipeline_distribution_by_agent": ["7d", "8w", "12w", "13w", "ytd"],
         "historic_weekly_volume": ["8w", "12w", "13w", "ytd"],
-        "volume_daily_historic": ["7d", "8w", "12w", "ytd"],
+        "volume_daily_historic": ["4w", "12w", "ytd"],
         "chat_weekly_volume_breakdown": ["8w", "12w", "13w", "ytd"],
         "weekly_bot_satisfaction": ["8w", "12w", "13w", "ytd"],
         "bot_volume_duration": ["7d", "8w", "12w", "13w", "ytd"],

@@ -2114,6 +2114,12 @@ def daily_chat_trends_performance(params: Dict[str, Any]) -> go.Figure:
     range_val = p.get("range", "12w")
 
     start_dt, end_dt = compute_range_bounds(range_val, source)
+    
+    if start_dt is None:
+        start_dt = datetime.now(pytz.UTC) - timedelta(weeks=12)
+    if end_dt is None:
+        end_dt = datetime.now(pytz.UTC)
+    
     df = _load_source_dataframe("chats", start_dt, end_dt, range_val)
 
     if df is None or len(df) == 0 or "chat_creation_date_adt" not in df.columns:
@@ -2125,36 +2131,74 @@ def daily_chat_trends_performance(params: Dict[str, Any]) -> go.Figure:
             df = df.drop_duplicates(subset=['chat_id'], keep='first')
         
         daily = df.copy()
-        
-        # Calculate rating_value from rate_raw if missing (Firestore doesn't have it)
-        if 'rating_value' not in daily.columns and 'rate_raw' in daily.columns:
-            # rate_raw is 'good' or 'bad' - convert to numeric (5 for good, 1 for bad)
-            daily['rating_value'] = daily['rate_raw'].apply(
-                lambda x: 5 if str(x).lower() == 'good' else (1 if str(x).lower() == 'bad' else None)
-            )
-        
         daily["date"] = daily["chat_creation_date_adt"].dt.date
         
-        # Count chats with ratings per day
+        # Count chats and transfers per day
         agg = daily.groupby("date").agg(
             chat_count=("date", "size"),
             transfers=("bot_transfer", "sum")
         ).reset_index()
         
-        # Calculate satisfaction % properly - count good ratings / total ratings
-        if 'rating_value' in daily.columns and 'rate_raw' in daily.columns:
-            # Group by date and calculate satisfaction from rate_raw (good/bad strings)
-            satisfaction_by_date = daily.groupby("date").apply(
-                lambda x: (
-                    (x['rate_raw'].str.lower() == 'good').sum() /
-                    x['rate_raw'].notna().sum() * 100
-                ) if x['rate_raw'].notna().sum() > 0 else 0.0
-            ).reset_index(name="satisfaction_pct")
-            agg = agg.merge(satisfaction_by_date, on="date", how="left")
-        else:
+        # Calculate transfer rate
+        agg["transfer_rate"] = (pd.to_numeric(agg["transfers"], errors="coerce") / agg["chat_count"]) * 100
+        
+        # Fetch satisfaction data from LiveChat Reports API (same as weekly_bot_satisfaction)
+        try:
+            import os
+            from livechat_ratings_fetcher import LiveChatRatingsFetcher
+            
+            pat = os.environ.get('LIVECHAT_PAT')
+            if pat and ':' in pat:
+                username, password = pat.split(':', 1)
+            elif pat:
+                username, password = pat, ''
+            else:
+                username, password = None, None
+            
+            if username:
+                fetcher = LiveChatRatingsFetcher(username, password)
+                ratings_data = fetcher.fetch_ratings(
+                    from_date=start_dt.replace(tzinfo=None),
+                    to_date=end_dt.replace(tzinfo=None),
+                    distribution="day"
+                )
+                
+                if ratings_data and 'records' in ratings_data:
+                    # Convert daily ratings to DataFrame
+                    satisfaction_records = []
+                    for date_str, data in ratings_data['records'].items():
+                        good = data.get('good', 0)
+                        bad = data.get('bad', 0)
+                        total = good + bad
+                        
+                        if total > 0:
+                            satisfaction_pct = (good / total) * 100
+                            satisfaction_records.append({
+                                'date': pd.to_datetime(date_str).date(),
+                                'satisfaction_pct': satisfaction_pct
+                            })
+                    
+                    if satisfaction_records:
+                        satisfaction_df = pd.DataFrame(satisfaction_records)
+                        agg = agg.merge(satisfaction_df, on='date', how='left')
+                        print(f"✅ Fetched satisfaction data from Reports API for {len(satisfaction_records)} days")
+                    else:
+                        agg["satisfaction_pct"] = 0.0
+                        print("⚠️ No rated chats found in Reports API response")
+                else:
+                    agg["satisfaction_pct"] = 0.0
+                    print("⚠️ Reports API returned no data")
+            else:
+                agg["satisfaction_pct"] = 0.0
+                print("⚠️ LIVECHAT_PAT not configured")
+        except Exception as e:
+            print(f"❌ Error fetching ratings from Reports API: {e}")
+            import traceback
+            traceback.print_exc()
             agg["satisfaction_pct"] = 0.0
         
-        agg["transfer_rate"] = (pd.to_numeric(agg["transfers"], errors="coerce") / agg["chat_count"]) * 100
+        # Fill missing satisfaction values with 0
+        agg["satisfaction_pct"] = agg["satisfaction_pct"].fillna(0.0)
 
         if len(agg) == 0:
             return _no_data_figure(meta.get("title"), "Date", "Count")
@@ -2174,7 +2218,10 @@ def daily_chat_trends_performance(params: Dict[str, Any]) -> go.Figure:
         fig.update_yaxes(title_text="Chats", secondary_y=False)
         fig.update_yaxes(title_text="Percentage (%)", secondary_y=True, range=[0, 100])
         return fig
-    except Exception:
+    except Exception as e:
+        print(f"❌ Error in daily_chat_trends_performance: {e}")
+        import traceback
+        traceback.print_exc()
         return _no_data_figure(meta.get("title"), "Date", "Count")
 
 
@@ -2182,11 +2229,13 @@ REGISTRY["daily_chat_trends_performance"]["meta"].update({
     "description": "Daily chat volume (bars) with satisfaction and transfer-rate lines (secondary axis).",
     "params": {
         "source": {"type": "enum", "values": ["chats"], "default": "chats"},
-        "range": {"type": "enum", "values": ["all", "52w", "26w", "12w", "8w", "4w"], "default": "12w"}
+        "range": {"type": "enum", "values": ["7d", "4w", "12w", "ytd", "all"], "default": "12w"}
     },
     "examples": [
         {"label": "Default", "query": ""},
-        {"label": "8w", "query": "range=8w"}
+        {"label": "7d", "query": "range=7d"},
+        {"label": "4w", "query": "range=4w"},
+        {"label": "YTD", "query": "range=ytd"}
     ]
 })
 
