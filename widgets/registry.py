@@ -323,10 +323,15 @@ def _load_source_dataframe(source: str, start_dt: Optional[datetime], end_dt: Op
         from firestore_db import FirestoreDatabase
         from ticket_processor import TicketDataProcessor
         
+        print(f"🔍 DEBUG: Attempting to load {source} from Firestore (range: {range_val}, start: {start_dt}, end: {end_dt})")
         db = FirestoreDatabase()
         if source == "tickets":
             df = db.get_tickets(start_date=start_dt, end_date=end_dt)
+            print(f"🔍 DEBUG: Firestore returned {len(df) if df is not None else 0} ticket records")
+            
             if df is not None and not df.empty:
+                print(f"🔍 DEBUG: Ticket columns from Firestore: {df.columns.tolist()}")
+                
                 # Apply pipeline name mapping if needed
                 df = _apply_pipeline_mapping(df)
                 
@@ -344,9 +349,15 @@ def _load_source_dataframe(source: str, start_dt: Optional[datetime], end_dt: Op
                 except:
                     pass
                 return df.copy()
+            else:
+                print(f"⚠️ Firestore returned empty DataFrame for tickets")
         elif source == "chats":
             df = db.get_chats(start_date=start_dt, end_date=end_dt)
+            print(f"🔍 DEBUG: Firestore returned {len(df) if df is not None else 0} chat records")
+            
             if df is not None and not df.empty:
+                print(f"🔍 DEBUG: Chat columns from Firestore: {df.columns.tolist()}")
+                
                 # CRITICAL: Deduplicate by chat_id to prevent duplicate records
                 if 'chat_id' in df.columns:
                     original_count = len(df)
@@ -364,8 +375,12 @@ def _load_source_dataframe(source: str, start_dt: Optional[datetime], end_dt: Op
                 except:
                     pass
                 return df.copy()
+            else:
+                print(f"⚠️ Firestore returned empty DataFrame for chats")
     except Exception as e:
         print(f"⚠️ Firestore unavailable: {e}, trying Google Sheets fallback")
+        import traceback
+        traceback.print_exc()
     
     # Priority 2: Try Google Sheets (fallback batch source)
     try:
@@ -727,12 +742,16 @@ def _apply_pipeline_mapping(df: pd.DataFrame) -> pd.DataFrame:
     This addresses the issue where widgets show pipeline IDs instead of names.
     """
     if 'Pipeline' not in df.columns:
+        print("🔍 DEBUG: _apply_pipeline_mapping - No Pipeline column in dataframe")
         return df
     
     try:
         # Check if Pipeline column contains numeric IDs (needs mapping)
         sample_values = df['Pipeline'].dropna().head(5)
+        print(f"🔍 DEBUG: _apply_pipeline_mapping - Sample pipeline values: {sample_values.tolist()}")
+        
         if sample_values.empty:
+            print("⚠️ DEBUG: _apply_pipeline_mapping - Pipeline column is empty")
             return df
         
         # If we have numeric pipeline IDs, try to map them to names
@@ -745,9 +764,12 @@ def _apply_pipeline_mapping(df: pd.DataFrame) -> pd.DataFrame:
                 from hubspot_fetcher import HubSpotTicketFetcher
                 
                 api_key = os.environ.get('HUBSPOT_API_KEY')
+                print(f"🔍 DEBUG: HUBSPOT_API_KEY present: {bool(api_key)}")
+                
                 if api_key:
                     fetcher = HubSpotTicketFetcher(api_key)
                     pipeline_mapping = fetcher.fetch_pipelines()
+                    print(f"🔍 DEBUG: Pipeline mapping retrieved: {len(pipeline_mapping) if pipeline_mapping else 0} entries")
                     
                     if pipeline_mapping:
                         # Apply mapping
@@ -765,9 +787,12 @@ def _apply_pipeline_mapping(df: pd.DataFrame) -> pd.DataFrame:
                     }
                     df = df.copy()
                     df['Pipeline'] = df['Pipeline'].astype(str).map(fallback_mapping).fillna(df['Pipeline'])
+                    print(f"🔍 DEBUG: Applied fallback mapping to {len(df)} rows")
                     
             except Exception as e:
                 print(f"⚠️ Failed to apply pipeline mapping: {e}")
+                import traceback
+                traceback.print_exc()
                 # Continue without mapping - better to show IDs than fail
         
         # Apply display name normalization (long names to short names)
@@ -789,35 +814,50 @@ def _ensure_ticket_columns(df: pd.DataFrame) -> pd.DataFrame:
     This addresses empty chart issues due to missing columns.
     """
     if df.empty:
+        print("🔍 DEBUG: _ensure_ticket_columns - DataFrame is empty")
         return df
     
     try:
+        print(f"🔍 DEBUG: _ensure_ticket_columns - Starting with {len(df)} records")
+        print(f"🔍 DEBUG: Available columns: {df.columns.tolist()}")
+        
         df = df.copy()
         
         # Ensure Weekend_Ticket column exists
         if 'Weekend_Ticket' not in df.columns and 'Create date' in df.columns:
+            print("🔍 DEBUG: Adding Weekend_Ticket column...")
             from ticket_processor import TicketDataProcessor
             processor = TicketDataProcessor()
             df = processor._add_weekend_flag(df)
             print("✅ Added Weekend_Ticket column for ticket widgets")
+        elif 'Weekend_Ticket' not in df.columns:
+            print("⚠️ WARNING: Cannot add Weekend_Ticket - 'Create date' column missing")
         
         # Ensure First Response Time (Hours) column exists and is numeric
         if 'First Response Time (Hours)' in df.columns:
+            before_count = df['First Response Time (Hours)'].notna().sum()
             df['First Response Time (Hours)'] = pd.to_numeric(df['First Response Time (Hours)'], errors='coerce')
+            after_count = df['First Response Time (Hours)'].notna().sum()
+            print(f"🔍 DEBUG: Response time conversion: {before_count} -> {after_count} valid values")
         
         # Ensure Create date is datetime
         if 'Create date' in df.columns:
+            print(f"🔍 DEBUG: Current timezone: {df['Create date'].dt.tz}")
             df['Create date'] = pd.to_datetime(df['Create date'], errors='coerce')
             # Convert to US/Eastern timezone for consistency
             if df['Create date'].dt.tz is None:
                 df['Create date'] = df['Create date'].dt.tz_localize('UTC').dt.tz_convert('US/Eastern')
+                print("🔍 DEBUG: Converted from naive to US/Eastern")
             elif str(df['Create date'].dt.tz) != 'US/Eastern':
                 df['Create date'] = df['Create date'].dt.tz_convert('US/Eastern')
+                print(f"🔍 DEBUG: Converted from {df['Create date'].dt.tz} to US/Eastern")
         
         print(f"✅ Ensured ticket columns for {len(df)} records")
         
     except Exception as e:
         print(f"⚠️ Error ensuring ticket columns: {e}")
+        import traceback
+        traceback.print_exc()
     
     return df
 
@@ -828,50 +868,67 @@ def _ensure_chat_columns(df: pd.DataFrame) -> pd.DataFrame:
     This addresses empty chart issues due to missing columns.
     """
     if df.empty:
+        print("🔍 DEBUG: _ensure_chat_columns - DataFrame is empty")
         return df
     
     try:
+        print(f"🔍 DEBUG: _ensure_chat_columns - Starting with {len(df)} records")
+        print(f"🔍 DEBUG: Available columns: {df.columns.tolist()}")
+        
         df = df.copy()
         
         # Ensure chat_creation_date_adt is datetime
         if 'chat_creation_date_adt' in df.columns:
+            before_count = df['chat_creation_date_adt'].notna().sum()
             df['chat_creation_date_adt'] = pd.to_datetime(df['chat_creation_date_adt'], errors='coerce')
+            after_count = df['chat_creation_date_adt'].notna().sum()
+            print(f"🔍 DEBUG: Date conversion: {before_count} -> {after_count} valid dates")
         
         # Ensure rating_value exists and is numeric (for satisfaction widgets)
         if 'rating_value' not in df.columns and 'rate_raw' in df.columns:
+            print("🔍 DEBUG: Converting rate_raw to rating_value...")
             # Convert rate_raw ('good'/'bad') to rating_value (5/1)
             df['rating_value'] = df['rate_raw'].apply(
                 lambda x: 5 if str(x).lower() == 'good' else (1 if str(x).lower() == 'bad' else None)
             )
-            print("✅ Added rating_value column from rate_raw")
+            print(f"✅ Added rating_value column from rate_raw ({df['rating_value'].notna().sum()} valid ratings)")
         
         # Ensure has_rating column exists
         if 'has_rating' not in df.columns and 'rating_value' in df.columns:
             df['has_rating'] = df['rating_value'].notna()
-            print("✅ Added has_rating column")
+            print(f"✅ Added has_rating column ({df['has_rating'].sum()} chats with ratings)")
         
         # Ensure bot_transfer column exists and is boolean
         if 'bot_transfer' in df.columns:
             df['bot_transfer'] = df['bot_transfer'].astype(bool)
+            print(f"🔍 DEBUG: bot_transfer: {df['bot_transfer'].sum()} transfers")
         
         # Ensure duration_minutes is numeric
         if 'duration_minutes' in df.columns:
+            before_count = df['duration_minutes'].notna().sum()
             df['duration_minutes'] = pd.to_numeric(df['duration_minutes'], errors='coerce')
+            after_count = df['duration_minutes'].notna().sum()
+            print(f"🔍 DEBUG: Duration conversion: {before_count} -> {after_count} valid values")
         
         # Ensure agent_type column exists (critical for filtering)
         if 'agent_type' not in df.columns:
+            print("⚠️ WARNING: agent_type column missing, attempting to infer...")
             # Try to infer from other columns
             if 'display_agent' in df.columns:
                 # Simple heuristic: if display_agent contains "AI" or "Bot", it's bot
                 df['agent_type'] = df['display_agent'].apply(
                     lambda x: 'bot' if any(term in str(x).lower() for term in ['ai', 'bot', 'wynn']) else 'human'
                 )
-                print("✅ Inferred agent_type from display_agent")
+                bot_count = (df['agent_type'] == 'bot').sum()
+                human_count = (df['agent_type'] == 'human').sum()
+                print(f"✅ Inferred agent_type from display_agent ({bot_count} bot, {human_count} human)")
         
         print(f"✅ Ensured chat columns for {len(df)} records")
         
     except Exception as e:
         print(f"⚠️ Error ensuring chat columns: {e}")
+        import traceback
+        traceback.print_exc()
     
     return df
 
