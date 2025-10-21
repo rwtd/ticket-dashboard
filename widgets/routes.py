@@ -18,9 +18,9 @@ from flask import Blueprint, render_template, request, abort, make_response, jso
 import pandas as pd
 
 from .registry import REGISTRY, get_widget_and_meta, normalize_params
-from google_sheets_data_source import get_tickets_data, get_chats_data
 from common_utils import create_metric_card, get_dashboard_css
 from livechat_ratings_fetcher import get_ratings_data
+from firestore_db import FirestoreDatabase
 
 widgets_bp = Blueprint("widgets", __name__)
 
@@ -112,6 +112,46 @@ def widgets_index():
         )
 
     resp = make_response(render_template("widgets/index.html", widgets=items))
+    return _apply_widget_headers(resp)
+
+
+@widgets_bp.route("/hubspot/trajectory_overview", methods=["GET"])
+def hubspot_trajectory_overview():
+    """
+    Lightweight HubSpot-friendly overview page with quick links to key TraJect Data assets.
+    Supports ?theme=dark|light to stay consistent with other embeds.
+    """
+    theme = (request.args.get("theme", "dark") or "dark").lower()
+    theme = "light" if theme == "light" else "dark"
+
+    resources = [
+        {
+            "icon": "📊",
+            "title": "Full Ticket Analytics Application",
+            "description": "Launch the interactive analytics experience for real-time support insights.",
+            "url": "https://ticket-dashboard-179279767621.northamerica-northeast1.run.app/",
+        },
+        {
+            "icon": "📄",
+            "title": "Google Sheets Raw Data",
+            "description": "Review the latest exported dataset used by the analytics suite.",
+            "url": "https://docs.google.com/spreadsheets/d/1KVAQLE2vL3z2CpRH_CIqA26ABhr0Oeuu2b7GUrTTjBY/",
+        },
+        {
+            "icon": "📚",
+            "title": "Application Documentation",
+            "description": "Access implementation notes, API references, and onboarding guides.",
+            "url": "https://ticket-dashboard-179279767621.northamerica-northeast1.run.app/app_docs",
+        },
+    ]
+
+    resp = make_response(
+        render_template(
+            "widgets/hubspot_overview.html",
+            theme=theme,
+            resources=resources,
+        )
+    )
     return _apply_widget_headers(resp)
 
 
