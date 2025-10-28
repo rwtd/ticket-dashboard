@@ -1,219 +1,104 @@
 name: Deploy to Cloud Run
 
 on:
-  workflow_dispatch:
-    inputs:
-      image_tag:
-        description: 'Container image tag (default: github.sha)'
-        required: false
-        default: ''
-      allow_unauthenticated:
-        description: 'Allow unauthenticated invocations'
-        required: false
-        type: boolean
-        default: true
   push:
     branches:
       - main
+  workflow_dispatch: # Allow manual triggers
 
-permissions:
-  id-token: write
-  contents: read
+env:
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  REGION: ${{ secrets.GCP_REGION }}
+  SERVICE_NAME: ticket-dashboard
+  AR_REPO: apps
 
 jobs:
   deploy:
-    name: Build and Deploy
+    name: Build and Deploy to Cloud Run
     runs-on: ubuntu-latest
-    outputs:
-      service_url: ${{ steps.get-url.outputs.service_url }}
-    env:
-      PROJECT_ID: ${{ secrets.PROJECT_ID }}
-      REGION: ${{ secrets.REGION }}
-      SERVICE_NAME: ${{ secrets.SERVICE_NAME }}
-      AR_REPO: ${{ secrets.AR_REPO }}
-      WIF_PROVIDER: ${{ secrets.WIF_PROVIDER }}
-      WIF_SERVICE_ACCOUNT: ${{ secrets.WIF_SERVICE_ACCOUNT }}
-      WIDGETS_XFO: ${{ secrets.WIDGETS_XFO }}
-      WIDGETS_FRAME_ANCESTORS: ${{ secrets.WIDGETS_FRAME_ANCESTORS }}
+    
+    permissions:
+      contents: read
+      id-token: write
+    
     steps:
-      - name: Checkout
+      - name: Checkout Repository
         uses: actions/checkout@v4
-
-      - name: Google Auth (Workload Identity Federation)
-        id: auth
+      
+      - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
-          workload_identity_provider: ${{ env.WIF_PROVIDER }}
-          service_account: ${{ env.WIF_SERVICE_ACCOUNT }}
-        continue-on-error: false
-
-      - name: Setup gcloud
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+      
+      - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
         with:
-          project_id: ${{ env.PROJECT_ID }}
-
-      - name: Validate configuration
-        shell: bash
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+      
+      - name: Configure Docker for Artifact Registry
         run: |
-          set -euo pipefail
-
-          echo "=== Configuration Validation ==="
-
-          # Validate required configuration is available
-          if [ -z "${PROJECT_ID:-}" ]; then
-            echo "❌ PROJECT_ID is not configured (check secrets.PROJECT_ID)"
-            exit 1
-          fi
-
-          if [ -z "${REGION:-}" ]; then
-            echo "❌ REGION is not configured (check secrets.REGION)"
-            exit 1
-          fi
-
-          if [ -z "${SERVICE_NAME:-}" ]; then
-            echo "❌ SERVICE_NAME is not configured (check secrets.SERVICE_NAME)"
-            exit 1
-          fi
-
-          if [ -z "${AR_REPO:-}" ]; then
-            echo "❌ AR_REPO is not configured (check secrets.AR_REPO)"
-            exit 1
-          fi
-
-          if [ -z "${WIF_PROVIDER:-}" ]; then
-            echo "❌ WIF_PROVIDER is not configured (check secrets.WIF_PROVIDER)"
-            exit 1
-          fi
-
-          if [ -z "${WIF_SERVICE_ACCOUNT:-}" ]; then
-            echo "❌ WIF_SERVICE_ACCOUNT is not configured (check secrets.WIF_SERVICE_ACCOUNT)"
-            exit 1
-          fi
-
-          echo "✅ Configuration validated successfully"
-          echo "📋 Deployment Configuration:"
-          echo "   PROJECT_ID=${PROJECT_ID}"
-          echo "   REGION=${REGION}"
-          echo "   SERVICE_NAME=${SERVICE_NAME}"
-          echo "   AR_REPO=${AR_REPO}"
-
-      - name: Ensure Artifact Registry repo exists
-        shell: bash
+          gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev
+      
+      - name: Ensure Artifact Registry Repository Exists
         run: |
-          set -euo pipefail
-
-          echo "=== Checking Artifact Registry ==="
-          
-          if ! gcloud artifacts repositories describe "${AR_REPO}" \
-            --location="${REGION}" \
-            --project="${PROJECT_ID}" >/dev/null 2>&1; then
-
-            echo "🔨 Creating Artifact Registry repo ${AR_REPO} in ${REGION}..."
-            gcloud artifacts repositories create "${AR_REPO}" \
+          if ! gcloud artifacts repositories describe ${{ env.AR_REPO }} \
+            --location=${{ env.REGION }} >/dev/null 2>&1; then
+            echo "Creating Artifact Registry repository..."
+            gcloud artifacts repositories create ${{ env.AR_REPO }} \
               --repository-format=docker \
-              --location="${REGION}" \
-              --project="${PROJECT_ID}" \
-              --description="Application containers"
+              --location=${{ env.REGION }} \
+              --description="Application containers for automated deployment"
           else
-            echo "✅ Artifact Registry repo ${AR_REPO} already exists in ${REGION}"
+            echo "Artifact Registry repository already exists"
           fi
-
-      - name: Build image with Cloud Build
-        id: build
-        shell: bash
+      
+      - name: Build Image with Cloud Build
         run: |
-          set -euo pipefail
-
-          echo "=== Building Container Image ==="
+          IMAGE_TAG=$(git rev-parse --short=12 HEAD)
+          IMAGE="${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.AR_REPO }}/${{ env.SERVICE_NAME }}:${IMAGE_TAG}"
           
-          # Determine image tag
-          IMAGE_TAG="${{ github.event.inputs.image_tag }}"
-          if [ -z "${IMAGE_TAG}" ]; then
-            IMAGE_TAG="${{ github.sha }}"
-          fi
-
-          IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${AR_REPO}/${SERVICE_NAME}:${IMAGE_TAG}"
-
-          echo "🏗️ Building image: ${IMAGE}"
+          echo "Building image: ${IMAGE}"
           gcloud builds submit --tag "${IMAGE}" .
-
-          # Use modern GITHUB_OUTPUT syntax
-          echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
-
-      - name: Deploy to Cloud Run
-        id: deploy
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          echo "=== Deploying to Cloud Run ==="
           
-          IMAGE="${{ steps.build.outputs.image }}"
-
-          # Set default values for environment variables
-          WX="${WIDGETS_XFO:-}"
-          WFA="${WIDGETS_FRAME_ANCESTORS:-}"
-
-          # Apply defaults if secrets are not set
-          if [ -z "$WX" ]; then
-            WX="SAMEORIGIN"
-          fi
-
-          if [ -z "$WFA" ]; then
-            WFA="'self' https://*.hubspot.com"
-          fi
-
-          # Determine allow unauthenticated flag (default true)
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            ALLOW="${{ github.event.inputs.allow_unauthenticated }}"
-            if [ -z "$ALLOW" ] || [ "$ALLOW" = "null" ]; then
-              ALLOW="true"
-            fi
-          else
-            ALLOW="true"
-          fi
-
-          AUTH_FLAG=""
-          if [ "${ALLOW}" = "true" ]; then
-            AUTH_FLAG="--allow-unauthenticated"
-          fi
-
-          echo "🚀 Deployment Configuration:"
-          echo "   IMAGE=${IMAGE}"
-          echo "   REGION=${REGION}"
-          echo "   AUTH_FLAG=${AUTH_FLAG:-'(none)'}"
-          echo "   WIDGETS_XFO=${WX}"
-          echo "   WIDGETS_FRAME_ANCESTORS=${WFA}"
-
-          gcloud run deploy "${SERVICE_NAME}" \
-            --region="${REGION}" \
+          # Also tag as latest
+          gcloud builds submit --tag "${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.AR_REPO }}/${{ env.SERVICE_NAME }}:latest" .
+          
+          echo "IMAGE=${IMAGE}" >> $GITHUB_ENV
+      
+      - name: Deploy to Cloud Run
+        run: |
+          echo "Deploying ${IMAGE} to Cloud Run..."
+          gcloud run deploy ${{ env.SERVICE_NAME }} \
             --image="${IMAGE}" \
+            --region="${{ env.REGION }}" \
             --platform=managed \
-            ${AUTH_FLAG} \
+            --allow-unauthenticated \
             --min-instances=0 \
             --max-instances=3 \
             --concurrency=80 \
-            --cpu=1 \
-            --memory=512Mi \
-            --set-env-vars="WIDGETS_XFO=${WX},WIDGETS_FRAME_ANCESTORS=${WFA}" \
-            --project="${PROJECT_ID}" \
-            --timeout=300
-
-      - name: Get service URL
+            --cpu=2 \
+            --memory=2Gi \
+            --timeout=900 \
+            --set-env-vars="WIDGETS_XFO=SAMEORIGIN,WIDGETS_FRAME_ANCESTORS='self' https://*.hubspot.com,GOOGLE_SHEETS_CREDENTIALS_PATH=/app/credentials/service_account_credentials.json" \
+            --update-secrets=/app/credentials/service_account_credentials.json=google-sheets-credentials:latest,GOOGLE_SHEETS_SPREADSHEET_ID=GOOGLE_SHEETS_SPREADSHEET_ID:latest,HUBSPOT_API_KEY=HUBSPOT_API_KEY:latest,LIVECHAT_PAT=LIVECHAT_PAT:latest,GEMINI_API_KEY=GEMINI_API_KEY:latest
+      
+      - name: Get Service URL
         id: get-url
-        shell: bash
         run: |
-          set -euo pipefail
-
-          echo "=== Getting Service URL ==="
-          
-          URL="$(gcloud run services describe "${SERVICE_NAME}" \
-            --region="${REGION}" \
-            --project="${PROJECT_ID}" \
-            --format='value(status.url)')"
-
-          echo "✅ Service deployed successfully!"
-          echo "🔗 Service URL: ${URL}"
-
-          # Use modern GITHUB_OUTPUT syntax
-          echo "service_url=${URL}" >> "$GITHUB_OUTPUT"
+          SERVICE_URL=$(gcloud run services describe ${{ env.SERVICE_NAME }} \
+            --region="${{ env.REGION }}" \
+            --format='value(status.url)')
+          echo "Service deployed successfully!"
+          echo "URL: ${SERVICE_URL}"
+          echo "service_url=${SERVICE_URL}" >> $GITHUB_OUTPUT
+      
+      - name: Deployment Summary
+        run: |
+          echo "## 🚀 Deployment Successful!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Service:** ${{ env.SERVICE_NAME }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Region:** ${{ env.REGION }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Image:** ${IMAGE}" >> $GITHUB_STEP_SUMMARY
+          echo "**URL:** ${{ steps.get-url.outputs.service_url }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Deployment completed at $(date -u)" >> $GITHUB_STEP_SUMMARY
