@@ -1896,5 +1896,103 @@ def health():
     """Health check endpoint for load balancers and container orchestration"""
     return jsonify({'status': 'healthy', 'timestamp': datetime.now().isoformat()}), 200
 
+# ==================== AUTOMATED SYNC ENDPOINTS ====================
+
+@app.route('/sync', methods=['POST', 'GET'])
+def scheduled_sync():
+    """
+    Endpoint for Cloud Scheduler to trigger automated incremental syncs
+    Fetches new data from HubSpot/LiveChat APIs and saves to Firestore
+    """
+    try:
+        logger.info("🔄 Scheduled sync triggered")
+        
+        # Get API credentials from environment
+        hubspot_key = os.environ.get('HUBSPOT_API_KEY')
+        livechat_pat = os.environ.get('LIVECHAT_PAT')
+        
+        if not all([hubspot_key, livechat_pat]):
+            logger.error("Missing required API credentials for sync")
+            return jsonify({
+                'status': 'error',
+                'message': 'Missing API credentials'
+            }), 500
+        
+        # Import and run sync
+        from firestore_sync_service import FirestoreSyncService
+        
+        service = FirestoreSyncService(
+            hubspot_api_key=hubspot_key,
+            livechat_pat=livechat_pat
+        )
+        
+        # Run incremental sync (only new/updated records)
+        ticket_count = service.sync_tickets(incremental=True)
+        chat_count = service.sync_chats(incremental=True)
+        
+        logger.info(f"✅ Sync complete: {ticket_count} tickets, {chat_count} chats")
+        
+        return jsonify({
+            'status': 'success',
+            'timestamp': datetime.now().isoformat(),
+            'tickets_synced': ticket_count,
+            'chats_synced': chat_count
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"❌ Scheduled sync failed: {e}", exc_info=True)
+        return jsonify({
+            'status': 'error',
+            'message': str(e),
+            'timestamp': datetime.now().isoformat()
+        }), 500
+
+@app.route('/sync/full', methods=['POST'])
+def scheduled_full_sync():
+    """
+    Endpoint for manual full sync (last 365 days)
+    Use sparingly - initial setup or data recovery only
+    """
+    try:
+        logger.info("🔄 Full sync triggered")
+        
+        hubspot_key = os.environ.get('HUBSPOT_API_KEY')
+        livechat_pat = os.environ.get('LIVECHAT_PAT')
+        
+        if not all([hubspot_key, livechat_pat]):
+            return jsonify({
+                'status': 'error',
+                'message': 'Missing API credentials'
+            }), 500
+        
+        from firestore_sync_service import FirestoreSyncService
+        
+        service = FirestoreSyncService(
+            hubspot_api_key=hubspot_key,
+            livechat_pat=livechat_pat
+        )
+        
+        # Run full sync
+        success = service.run_full_sync()
+        
+        if success:
+            return jsonify({
+                'status': 'success',
+                'timestamp': datetime.now().isoformat(),
+                'message': 'Full sync completed'
+            }), 200
+        else:
+            return jsonify({
+                'status': 'error',
+                'message': 'Full sync failed - check logs'
+            }), 500
+            
+    except Exception as e:
+        logger.error(f"❌ Full sync failed: {e}", exc_info=True)
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5001)
