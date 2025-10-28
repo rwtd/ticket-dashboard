@@ -264,15 +264,15 @@ def render_widget_json(name: str):
 @widgets_bp.route("/metrics", methods=["GET"])
 def render_metrics():
     """
-    Render HTML metric cards for embedding.
+    Render HTML metric cards for embedding with interactive time range buttons.
     Query params:
       - type: tickets | chats | all (default: all)
-      - range: 7d | 30d | 90d (default: 90d for tickets, 30d for chats)
+      - range: 7d | 30d | 8w | 12w | ytd (default: 8w)
       - theme: dark | light (default: dark)
     """
     # Parse query parameters
     metrics_type = request.args.get("type", "all").lower()
-    range_param = request.args.get("range", "")
+    range_param = request.args.get("range", "8w")  # Default to 8 weeks
     theme = request.args.get("theme", "dark").lower()
     
     # Validate parameters
@@ -280,10 +280,6 @@ def render_metrics():
         metrics_type = "all"
     if theme not in ["dark", "light"]:
         theme = "dark"
-    
-    # Default ranges
-    if not range_param:
-        range_param = "90d" if metrics_type in ["tickets", "all"] else "30d"
     
     # Parse range parameter
     range_days = 90  # default
@@ -323,53 +319,63 @@ def render_metrics():
         timeframe_label = f"Last {range_days} Days"
     
     try:
+        # Use Firestore as primary data source
+        db = FirestoreDatabase()
+        
         # Tickets metrics
         if metrics_type in ["tickets", "all"]:
-            tickets_df = get_tickets_data()
-            if tickets_df is not None and len(tickets_df) > 0:
-                ticket_cards = _build_ticket_metrics(tickets_df, start_date, end_date, range_days)
-                if ticket_cards:
-                    cards_html.append(f'<div class="metrics-section"><h2 style="color: #ff6b6b;">📋 Ticket Metrics ({timeframe_label})</h2><div class="metric-grid">{ticket_cards}</div></div>')
+            try:
+                tickets_df = db.get_tickets(start_date=start_date, end_date=end_date)
+                if tickets_df is not None and len(tickets_df) > 0:
+                    ticket_cards = _build_ticket_metrics(tickets_df, start_date, end_date, range_days)
+                    if ticket_cards:
+                        cards_html.append(f'<div class="metrics-section"><h2 style="color: #ff6b6b;">📋 Ticket Metrics ({timeframe_label})</h2><div class="metric-grid">{ticket_cards}</div></div>')
+                else:
+                    print("⚠️ No tickets data available from Firestore")
+            except Exception as e:
+                print(f"❌ Error loading ticket metrics from Firestore: {e}")
+                import traceback
+                traceback.print_exc()
         
         # Chat metrics
         if metrics_type in ["chats", "all"]:
-            chats_df = get_chats_data()
-            if chats_df is not None and len(chats_df) > 0:
-                chat_cards = _build_chat_metrics(chats_df, start_date, end_date, range_days)
-                if chat_cards:
-                    cards_html.append(f'<div class="metrics-section"><h2 style="color: #4ecdc4;">💬 Chat Metrics ({timeframe_label})</h2><div class="metric-grid">{chat_cards}</div></div>')
+            try:
+                chats_df = db.get_chats(start_date=start_date, end_date=end_date)
+                if chats_df is not None and len(chats_df) > 0:
+                    chat_cards = _build_chat_metrics(chats_df, start_date, end_date, range_days)
+                    if chat_cards:
+                        cards_html.append(f'<div class="metrics-section"><h2 style="color: #4ecdc4;">💬 Chat Metrics ({timeframe_label})</h2><div class="metric-grid">{chat_cards}</div></div>')
+                else:
+                    print("⚠️ No chats data available from Firestore")
+            except Exception as e:
+                print(f"❌ Error loading chat metrics from Firestore: {e}")
+                import traceback
+                traceback.print_exc()
     
     except Exception as e:
-        print(f"Error loading metrics: {e}")
-        cards_html.append(f'<div class="section"><p style="color: #ff6b6b;">Error loading metrics: {str(e)}</p></div>')
+        print(f"❌ Error initializing Firestore: {e}")
+        import traceback
+        traceback.print_exc()
+        cards_html.append(f'<div class="section"><p style="color: #ff6b6b;">Error loading metrics: Firestore unavailable</p></div>')
     
-    # Build complete HTML
-    css = get_dashboard_css()
+    # Build complete HTML with interactive template for time range buttons
+    metrics_html = ''.join(cards_html) if cards_html else '<div class="section"><p>No metrics available for the selected timeframe.</p></div>'
     
-    html_content = f"""
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Support Metrics</title>
-    <style>
-        {css}
-        .metrics-section {{
-            margin-bottom: 30px;
-        }}
-        .metrics-section h2 {{
-            margin-bottom: 15px;
-        }}
-    </style>
-</head>
-<body>
-    {''.join(cards_html) if cards_html else '<div class="section"><p>No metrics available for the selected timeframe.</p></div>'}
-</body>
-</html>
-    """
+    # Define time range buttons for metrics
+    metrics_buttons = ["7d", "30d", "8w", "12w", "ytd"]
     
-    resp = make_response(html_content)
+    # Render using interactive widget base template
+    resp = make_response(
+        render_template(
+            "widgets/interactive_widget_base.html",
+            chart_html=metrics_html,
+            theme=theme,
+            width="100%",
+            height="auto",
+            title=f"Support Metrics ({timeframe_label})",
+            buttons=metrics_buttons
+        )
+    )
     return _apply_widget_headers(resp)
 
 
@@ -390,6 +396,33 @@ def _build_ticket_metrics(df: pd.DataFrame, start_date: datetime, end_date: date
         owner_col = 'Case Owner' if 'Case Owner' in df.columns else 'Ticket owner'
         if owner_col in df.columns:
             df = df[df[owner_col].isin(support_agents)]
+        
+        # Add Weekend_Ticket flag if missing (for Firestore data that was synced before this feature)
+        if 'Weekend_Ticket' not in df.columns and 'Create date' in df.columns:
+            eastern = pytz.timezone('US/Eastern')
+            
+            def _is_weekend(dt):
+                """Check if timestamp falls within weekend period: Friday 6PM EDT - Monday 5AM EDT"""
+                if pd.isna(dt):
+                    return False
+                # Convert to EDT timezone
+                dt_edt = dt.astimezone(eastern) if dt.tzinfo else eastern.localize(dt)
+                weekday = dt_edt.weekday()  # Monday=0, Sunday=6
+                current_time = dt_edt.time()
+                
+                # Friday after 6PM
+                if weekday == 4 and current_time >= pd.Timestamp('18:00').time():
+                    return True
+                # Saturday and Sunday (all day)
+                if weekday in [5, 6]:
+                    return True
+                # Monday before 5AM
+                if weekday == 0 and current_time < pd.Timestamp('05:00').time():
+                    return True
+                return False
+            
+            df['Weekend_Ticket'] = df['Create date'].apply(_is_weekend)
+            print(f"✅ Added Weekend_Ticket flag to {df['Weekend_Ticket'].sum()} of {len(df)} tickets")
         
         # Calculate metrics
         total_tickets = len(df)

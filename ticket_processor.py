@@ -449,36 +449,14 @@ class TicketDataProcessor:
             if len(historic_day_counts) > 0:
                 analytics['charts'].append(self._create_historic_daily_volume_chart(historic_day_counts))
         
-        # Summary metrics - use last 90 days regardless of user's date selection
-        if self.df is not None and len(self.df) > 0:
-            from datetime import datetime, timedelta
-            now_utc = datetime.now(pytz.UTC)
-            ninety_days_ago_utc = now_utc - timedelta(days=90)
-
-            created_utc = pd.to_datetime(
-                self.df.get("ticket_created_at_utc", self.df.get("Create date")),
-                errors='coerce',
-            )
-
-            if not pd.api.types.is_datetime64_any_dtype(created_utc):
-                created_utc = pd.to_datetime(created_utc, errors='coerce')
-
-            if created_utc.dt.tz is None:
-                created_utc = created_utc.dt.tz_localize(pytz.UTC)
-            else:
-                created_utc = created_utc.dt.tz_convert(pytz.UTC)
-
-            summary_mask = (created_utc >= ninety_days_ago_utc) & (created_utc <= now_utc)
-            summary_df = self.df[summary_mask].copy()
-            summary_df["_created_at_utc"] = created_utc[summary_mask]
-        else:
-            summary_df = analysis_df
-
+        # Summary metrics - use the actual dashboard timeframe (analysis_df)
+        summary_df = analysis_df.copy()
+        
         total_tickets = len(summary_df)
         weekend_tickets = summary_df["Weekend_Ticket"].sum() if "Weekend_Ticket" in summary_df.columns else 0
         weekday_tickets = total_tickets - weekend_tickets
 
-        # Response time analysis (weekdays only, excluding LiveChat) - use 90-day data
+        # Response time analysis (weekdays only, excluding LiveChat)
         weekday_df_summary = summary_df[summary_df["Weekend_Ticket"] == False] if "Weekend_Ticket" in summary_df.columns else summary_df
         weekday_non_livechat = weekday_df_summary[weekday_df_summary["Pipeline"] != "Live Chat "] if "Pipeline" in weekday_df_summary.columns else weekday_df_summary
         avg_response_weekday = weekday_non_livechat["First Response Time (Hours)"].median() if "First Response Time (Hours)" in weekday_non_livechat.columns else None
@@ -496,26 +474,32 @@ class TicketDataProcessor:
         weekend_df = analysis_df[analysis_df["Weekend_Ticket"] == True]
         avg_response_weekend = weekend_df["First Response Time (Hours)"].mean()
         
-        # Calculate daily averages for subtext based on 90-day summary data
-        if len(summary_df) > 0:
-            summary_date_range_days = (summary_df['Create date'].max() - summary_df['Create date'].min()).days + 1
+        # Calculate actual date range and daily averages from the dashboard timeframe
+        if len(summary_df) > 0 and 'Create date' in summary_df.columns:
+            date_range_start = summary_df['Create date'].min()
+            date_range_end = summary_df['Create date'].max()
+            summary_date_range_days = (date_range_end - date_range_start).days + 1
+            
+            # Format date range label
+            timeframe_label = f"{date_range_start.strftime('%b %d, %Y')} - {date_range_end.strftime('%b %d, %Y')}"
         else:
-            summary_date_range_days = 90  # fallback to 90 days
+            summary_date_range_days = 1
+            timeframe_label = "Selected Period"
 
         daily_avg_total = total_tickets / summary_date_range_days if summary_date_range_days > 0 else 0
         daily_avg_weekday = weekday_tickets / summary_date_range_days if summary_date_range_days > 0 else 0
         daily_avg_weekend = weekend_tickets / summary_date_range_days if summary_date_range_days > 0 else 0
         
         analytics['metrics'] = [
-            # Make weekday response time prominent and larger
+            # Make weekday response time prominent and larger with dynamic timeframe
             create_metric_card(f"{avg_response_weekday:.3f}h" if pd.notna(avg_response_weekday) else "N/A",
-                             "⚡ Median Response (Weekday) - 90d", "satisfaction-card-ultra"),
-            # Add daily averages as subtext for count cards - alternating colors
-            create_metric_card(total_tickets, "Total Tickets (Last 90 Days)", "transfer-card-ultra",
+                             f"⚡ Median Response (Weekday)", "satisfaction-card-ultra"),
+            # Add daily averages as subtext for count cards - alternating colors with dynamic timeframe
+            create_metric_card(total_tickets, f"Total Tickets ({timeframe_label})", "transfer-card-ultra",
                              f"{daily_avg_total:.1f} per day"),
-            create_metric_card(weekday_tickets, "Weekday Tickets (Last 90 Days)", "satisfaction-card-ultra",
+            create_metric_card(weekday_tickets, f"Weekday Tickets ({timeframe_label})", "satisfaction-card-ultra",
                              f"{daily_avg_weekday:.1f} per day"),
-            create_metric_card(weekend_tickets, "Weekend Tickets (Last 90 Days)", "transfer-card-ultra",
+            create_metric_card(weekend_tickets, f"Weekend Tickets ({timeframe_label})", "transfer-card-ultra",
                              f"{daily_avg_weekend:.1f} per day"),
         ]
         
