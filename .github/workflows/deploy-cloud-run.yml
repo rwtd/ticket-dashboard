@@ -80,7 +80,7 @@ jobs:
             --memory=2Gi \
             --timeout=900 \
             --set-env-vars="WIDGETS_XFO=SAMEORIGIN,WIDGETS_FRAME_ANCESTORS='self' https://*.hubspot.com,GOOGLE_SHEETS_CREDENTIALS_PATH=/app/credentials/service_account_credentials.json" \
-            --update-secrets=/app/credentials/service_account_credentials.json=google-sheets-credentials:latest,GOOGLE_SHEETS_SPREADSHEET_ID=GOOGLE_SHEETS_SPREADSHEET_ID:latest,HUBSPOT_API_KEY=HUBSPOT_API_KEY:latest,LIVECHAT_PAT=LIVECHAT_PAT:latest,GEMINI_API_KEY=GEMINI_API_KEY:latest
+            --update-secrets=/app/credentials/service_account_credentials.json=google-sheets-credentials:latest,GOOGLE_SHEETS_SPREADSHEET_ID=GOOGLE_SHEETS_SPREADSHEET_ID:latest,HUBSPOT_API_KEY=HUBSPOT_API_KEY:latest,LIVECHAT_PAT=LIVECHAT_PAT:latest,GEMINI_API_KEY=GEMINI_API_KEY:latest,ADMIN_PASSWORD=ADMIN_PASSWORD:latest
       
       - name: Get Service URL
         id: get-url

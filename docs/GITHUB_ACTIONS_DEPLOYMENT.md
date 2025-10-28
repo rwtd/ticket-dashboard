@@ -92,6 +92,7 @@ The workflow expects these secrets to exist in Google Cloud Secret Manager:
 | `HUBSPOT_API_KEY` | HubSpot API access |
 | `LIVECHAT_PAT` | LiveChat Personal Access Token |
 | `GEMINI_API_KEY` | Google Gemini API key |
+| `ADMIN_PASSWORD` | Admin panel authentication password |
 
 These should already be configured if you've deployed manually before. If not, create them:
 
